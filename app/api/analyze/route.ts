@@ -32,37 +32,96 @@ function tilTranskript(turns: InTurn[]): { speaker: Rolle; text: string }[] {
     .filter(t => t.text.length > 0)
 }
 
-async function kallLLM(transkript: { speaker: Rolle; text: string }[]) {
-  const model = process.env.OPENAI_MODEL || "gpt-5-mini"
+const FALLBACK_MODELLER = [
+  "gpt-5-mini",
+  "gpt-4o-mini",
+  "gpt-4.1-mini"
+]
+
+async function kallOpenAI(model: string, messages: any[], brukJsonModus: boolean) {
+  const body: any = { model, messages, temperature: 0 }
+  if (brukJsonModus) body.response_format = { type: "json_object" }
+
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      model,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: MI_KLASSIFISERING_PROMPT_NB },
-        { role: "user", content: byggAnalyseInndata(transkript) }
-      ],
-      temperature: 0
-    })
+    body: JSON.stringify(body)
   })
-  if (!r.ok) throw new Error(`OpenAI-feil ${r.status}`)
-  const j = await r.json()
+
+  const text = await r.text()
+  if (!r.ok) {
+    const msg = text || ""
+    const err = new Error(`OpenAI-feil ${r.status}: ${msg}`)
+    ;(err as any).status = r.status
+    ;(err as any).raw = msg
+    throw err
+  }
+  let j: any = {}
+  try { j = JSON.parse(text) } catch {}
   const content = j?.choices?.[0]?.message?.content || "{}"
-  let parsed: KlassifiseringSvar
-  try { parsed = JSON.parse(content) } catch { parsed = { per_turn: [] } }
-  return parsed
+  return content
+}
+
+function skalFalleTilbakeUtenJsonFormat(rawErr: string) {
+  return /response_format|Unrecognized request argument|does not support/i.test(rawErr || "")
+}
+
+function erModellFeil(rawErr: string) {
+  return /model.*not.*found|unknown model|does not exist|not available/i.test(rawErr || "")
+}
+
+async function kallLLM(transkript: { speaker: Rolle; text: string }[]) {
+  const sysBase = MI_KLASSIFISERING_PROMPT_NB
+  const usr = { role: "user", content: byggAnalyseInndata(transkript) }
+
+  const ønsket = process.env.OPENAI_MODEL || FALLBACK_MODELLER[0]
+  const kandidater = [ønsket, ...FALLBACK_MODELLER.filter(m => m !== ønsket)]
+
+  let sisteFeil: any = null
+
+  for (const modell of kandidater) {
+    try {
+      const sys = { role: "system", content: sysBase }
+      const content = await kallOpenAI(modell, [sys, usr], true)
+      try { return JSON.parse(content) as KlassifiseringSvar } catch { /* fortsetter til fallback nedenfor */ }
+    } catch (e: any) {
+      sisteFeil = e
+      const raw = String(e?.raw || e?.message || "")
+      if (skalFalleTilbakeUtenJsonFormat(raw)) {
+        try {
+          const sysFallback = {
+            role: "system",
+            content: sysBase + `\nSvar kun med gyldig JSON-objekt, ingen fritekst, ingen forklaringer.`
+          }
+          const content2 = await kallOpenAI(modell, [sysFallback, usr], false)
+          return JSON.parse(content2) as KlassifiseringSvar
+        } catch (e2: any) {
+          sisteFeil = e2
+        }
+      }
+      if (erModellFeil(raw)) {
+        continue
+      }
+    }
+  }
+
+  const msg = String(sisteFeil?.message || "Ukjent OpenAI-feil")
+  throw new Error(msg)
 }
 
 export async function POST(req: NextRequest) {
   try {
+    if (!process.env.OPENAI_API_KEY) throw new Error("Mangler OPENAI_API_KEY i miljøvariabler")
     const body = (await req.json()) as Body
     const base = tilTranskript(body.turns || [])
     const medIndex: RåYtring[] = base.map((t, i) => ({ index: i, speaker: t.speaker, text: t.text }))
+
+    if (base.length === 0) {
+      return new Response(JSON.stringify({ error: "Tomt transkript" }), { status: 400 })
+    }
 
     const rå = await kallLLM(base)
     const klass = etterbehandleKlassifisering(medIndex, rå)
