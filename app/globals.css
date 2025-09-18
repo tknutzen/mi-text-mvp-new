@@ -1,0 +1,241 @@
+/* ====== Lys profil m. subtile bakgrunner + Fretex-rød ====== */
+:root {
+  --bg: #f7f7f8;          /* sidebakgrunn */
+  --card: #ffffff;        /* kort */
+  --text: #1f2937;        /* slate-800 */
+  --muted: #6b7280;       /* slate-500 */
+  --line: #e5e7eb;        /* gray-200 */
+  --accent: #d52b1e;      /* Fretex-ish rød */
+  --accent-600: #c11f1a;  /* hover */
+  --accent-50: #fff1f2;   /* veldig lys rød */
+  --focus: #2563eb;       /* blå fokusring */
+  --chat-bg: #fafafa;     /* lys grå bakgrunn for chat-kortet */
+
+  /* Felles kontroll/knapp-høyde: GJØR alle like høye (Start, Send, Avslutt, dropdowns) */
+  --btn-h: 42px;
+  --ctrl-h: var(--btn-h);
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg); color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.container { max-width: 980px; margin: 0 auto; padding: 24px; }
+
+.card {
+  background: var(--card);
+  border-radius: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+
+label { font-size: 14px; color: var(--muted); display: block; margin-bottom: 6px; }
+
+/* Skjemafelter */
+/* Input og textarea – samme høyde som knapper, større tekst */
+input, textarea {
+  width: 100%;
+  height: var(--btn-h);            /* samme høyde som Start/Send/Avslutt */
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  background: #ffffff;
+  color: var(--text);
+  font-size: 15px;                 /* litt større tekst */
+  outline: none;
+  display: inline-flex;            /* for vertikal sentrering */
+  align-items: center;
+}
+input:focus, textarea:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+}
+
+/* Select – samme høyde og font, men behold native dropdown-pil */
+select {
+  width: 100%;
+  height: var(--btn-h);
+  padding: 0 36px 0 12px; /* plass til pil på høyre side */
+  border-radius: 8px;
+  border: 1px solid #d1d5db;
+  background-color: #ffffff;
+  color: var(--text);
+  font-size: 15px;
+  line-height: normal;
+  outline: none;
+  display: block;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%236b7280' viewBox='0 0 16 16'><path d='M4.646 6.646a.5.5 0 0 1 .708 0L8 9.293l2.646-2.647a.5.5 0 0 1 .708.708l-3 3a.5.5 0 0 1-.708 0l-3-3a.5.5 0 0 1 0-.708z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 16px 16px;
+}
+select:focus {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+}
+
+/* === Ens høyde i topplinjen (dropdowns) – matcher knapphøyden === */
+.select-control {
+  height: var(--ctrl-h);
+  padding: 0 12px;
+  font-size: 15px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.2;
+  /* gjør høyde mer forutsigbar i Safari/Chrome */
+  -webkit-appearance: none;
+  appearance: none;
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+}
+
+/* Knapper – litt tykkere skrift, felles høyde og auto-bredde */
+button {
+  height: var(--btn-h);
+  width: auto;
+  padding: 0 16px;                    /* vertikal padding overstyres av fast høyde */
+  border-radius: 8px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: var(--accent);
+  color: #ffffff;
+  font-weight: 700;                    /* tykkere */
+  font-size: 15px;
+  display: inline-flex;                /* sentrer innholdet vertikalt/horisontalt */
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+button:hover { background: var(--accent-600); }
+button:disabled { opacity: .6; cursor: not-allowed; }
+
+/* Sekundær knapp – outline */
+button.secondary {
+  background: #ffffff;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+button.secondary:hover { background: #ffecec; }
+
+/* Merker/“badges” */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-50);
+  color: var(--accent-600);
+  font-size: 12px;
+  border: 1px solid var(--line);
+}
+
+/* Header + logo */
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin-bottom: 12px;
+}
+.logo {
+  width: clamp(260px, 45vw, 520px);
+  height: auto;
+  display: block;
+  margin: 12px auto;
+}
+.title { margin: 0; }
+.small { color: var(--muted); font-size: 14px; }
+
+/* Chat-kort har egen lys bakgrunn */
+.card.chat-card { background: var(--chat-bg); }
+
+/* Chat-bobler */
+.chat { display: flex; flex-direction: column; gap: 10px; }
+.bubble {
+  padding: 10px 12px;
+  border-radius: 12px;
+  max-width: 85%;
+  border: 1px solid var(--line);
+}
+/* Jobbkonsulent (blålig) */
+.bubble.student {
+  background: #eef2ff;                 /* indigo-50 */
+  border-color: #c7d2fe;               /* indigo-200 */
+  align-self: flex-end;
+}
+/* Jobbsøker (rødlighvitt) */
+.bubble.client {
+  background: #fff1f2;                 /* rose-50 */
+  border-color: #fecdd3;               /* rose-200 */
+  align-self: flex-start;
+}
+
+hr { border: 0; height: 1px; background: var(--line); margin: 16px 0; }
+pre { white-space: pre-wrap; word-wrap: break-word; }
+
+.table { width: 100%; border-collapse: collapse; }
+.table th, .table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+
+.download { margin-top: 12px; }
+
+/* Spinner */
+.loader {
+  border: 3px solid #f3f4f6;           /* gray-100 */
+  border-top: 3px solid var(--accent);
+  border-radius: 50%;
+  width: 18px;
+  height: 18px;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { from { transform: rotate(0deg)} to { transform: rotate(360deg)} }
+
+/* === Pop-up hint (mer synlig: større, farget bakgrunn, tydelig pil/kant) === */
+.input-wrapper { position: relative; }
+
+.popup-hint {
+  position: absolute;
+  left: 12px;
+  bottom: calc(100% + 12px);           /* over feltet */
+  z-index: 10;
+  background: var(--accent-50);        /* lys rød bakgrunn */
+  border: 1px solid var(--accent);     /* tydelig rød kant */
+  box-shadow: 0 6px 16px rgba(0,0,0,.12);
+  border-radius: 12px;
+  padding: 14px 16px;                  /* større */
+  color: var(--text);
+  font-size: 15px;                     /* større tekst */
+  max-width: 640px;                    /* større bredde */
+}
+.popup-hint::after {
+  content: "";
+  position: absolute;
+  left: 24px;
+  top: 100%;                           /* pilen under boksen (peker ned) */
+  border-width: 10px;
+  border-style: solid;
+  border-color: var(--accent-50) transparent transparent transparent;
+}
+.popup-hint::before {
+  content: "";
+  position: absolute;
+  left: 24px;
+  top: calc(100% + 1px);
+  border-width: 11px;
+  border-style: solid;
+  border-color: var(--accent) transparent transparent transparent; /* kantlinje bak pilen */
+}
