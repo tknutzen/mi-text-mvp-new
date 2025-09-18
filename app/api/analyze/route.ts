@@ -16,14 +16,34 @@ export const runtime = "nodejs"
 type InTurn = { speaker?: string; rolle?: string; text?: string; tekst?: string }
 type Body = { turns?: InTurn[]; topic?: string }
 
-function normSpeaker(x: string | undefined): Rolle {
-  const v = (x || "").toLowerCase()
-  if (v.includes("konsulent")) return "jobbkonsulent"
-  if (v.includes("søker") || v.includes("soker")) return "jobbsøker"
-  return v === "user" ? "jobbkonsulent" : "jobbsøker"
+type NormalisertRolle = "jobbkonsulent" | "jobbsøker"
+
+function normSpeaker(x: string | undefined): NormalisertRolle {
+  const v = (x || "").toLowerCase().trim()
+
+  const konsulentAliaser = new Set([
+    "jobbkonsulent", "konsulent", "veileder", "coach", "rådgiver", "raadgiver", "rådgjevar", "student", "mentor", "terapeut",
+    "user" // mange logger bruker "user" for veileder
+  ])
+  const søkerAliaser = new Set([
+    "jobbsøker", "jobbsoker", "søker", "soker", "bruker", "klient", "pasient", "deltaker", "deltakar",
+    "assistant" // mange logger bruker "assistant" for kandidaten
+  ])
+
+  if (konsulentAliaser.has(v)) return "jobbkonsulent"
+  if (søkerAliaser.has(v)) return "jobbsøker"
+
+  // Fallback-heuristikk hvis det kom inn fritekst
+  if (v.includes("konsulent") || v.includes("veileder") || v.includes("coach") || v.includes("råd") || v === "user") {
+    return "jobbkonsulent"
+  }
+  if (v.includes("søker") || v.includes("soker") || v.includes("bruker") || v.includes("klient") || v === "assistant") {
+    return "jobbsøker"
+  }
+  return "jobbsøker"
 }
 
-function tilTranskript(turns: InTurn[]): { speaker: Rolle; text: string }[] {
+function tilTranskript(turns: InTurn[]): { speaker: NormalisertRolle; text: string }[] {
   return (turns || [])
     .map(t => ({
       speaker: normSpeaker(t.speaker ?? t.rolle),
@@ -32,11 +52,7 @@ function tilTranskript(turns: InTurn[]): { speaker: Rolle; text: string }[] {
     .filter(t => t.text.length > 0)
 }
 
-const FALLBACK_MODELLER = [
-  "gpt-5-mini",
-  "gpt-4o-mini",
-  "gpt-4.1-mini"
-]
+const FALLBACK_MODELLER = ["gpt-5-mini", "gpt-4o-mini", "gpt-4.1-mini"]
 
 async function kallOpenAI(model: string, messages: any[], brukJsonModus: boolean) {
   const body: any = { model, messages, temperature: 0 }
@@ -73,9 +89,9 @@ function erModellFeil(rawErr: string) {
   return /model.*not.*found|unknown model|does not exist|not available/i.test(rawErr || "")
 }
 
-async function kallLLM(transkript: { speaker: Rolle; text: string }[]) {
+async function kallLLM(transkript: { speaker: NormalisertRolle; text: string }[]) {
   const sysBase = MI_KLASSIFISERING_PROMPT_NB
-  const usr = { role: "user", content: byggAnalyseInndata(transkript) }
+  const usr = { role: "user", content: byggAnalyseInndata(transkript as any) }
 
   const ønsket = process.env.OPENAI_MODEL || FALLBACK_MODELLER[0]
   const kandidater = [ønsket, ...FALLBACK_MODELLER.filter(m => m !== ønsket)]
@@ -86,7 +102,7 @@ async function kallLLM(transkript: { speaker: Rolle; text: string }[]) {
     try {
       const sys = { role: "system", content: sysBase }
       const content = await kallOpenAI(modell, [sys, usr], true)
-      try { return JSON.parse(content) as KlassifiseringSvar } catch { /* fortsetter til fallback nedenfor */ }
+      try { return JSON.parse(content) as KlassifiseringSvar } catch {}
     } catch (e: any) {
       sisteFeil = e
       const raw = String(e?.raw || e?.message || "")
@@ -94,7 +110,7 @@ async function kallLLM(transkript: { speaker: Rolle; text: string }[]) {
         try {
           const sysFallback = {
             role: "system",
-            content: sysBase + `\nSvar kun med gyldig JSON-objekt, ingen fritekst, ingen forklaringer.`
+            content: sysBase + "\nSvar kun med gyldig JSON-objekt, ingen fritekst, ingen forklaringer."
           }
           const content2 = await kallOpenAI(modell, [sysFallback, usr], false)
           return JSON.parse(content2) as KlassifiseringSvar
@@ -115,9 +131,10 @@ async function kallLLM(transkript: { speaker: Rolle; text: string }[]) {
 export async function POST(req: NextRequest) {
   try {
     if (!process.env.OPENAI_API_KEY) throw new Error("Mangler OPENAI_API_KEY i miljøvariabler")
+
     const body = (await req.json()) as Body
     const base = tilTranskript(body.turns || [])
-    const medIndex: RåYtring[] = base.map((t, i) => ({ index: i, speaker: t.speaker, text: t.text }))
+    const medIndex: RåYtring[] = base.map((t, i) => ({ index: i, speaker: t.speaker as Rolle, text: t.text }))
 
     if (base.length === 0) {
       return new Response(JSON.stringify({ error: "Tomt transkript" }), { status: 400 })
