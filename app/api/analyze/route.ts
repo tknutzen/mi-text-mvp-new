@@ -9,7 +9,7 @@ import {
   type RåYtring,
   type KlassifiseringSvar
 } from "@/lib/mi_prompt"
-import { scoreFraAnalyse } from "@/lib/report"
+import { scoreFromAnalysis } from "@/lib/report"
 
 export const runtime = "nodejs"
 
@@ -63,12 +63,55 @@ export async function POST(req: NextRequest) {
     const body = (await req.json()) as Body
     const base = tilTranskript(body.turns || [])
     const medIndex: RåYtring[] = base.map((t, i) => ({ index: i, speaker: t.speaker, text: t.text }))
+
     const rå = await kallLLM(base)
     const klass = etterbehandleKlassifisering(medIndex, rå)
     const tellinger = tellingerFraKlassifisering(klass)
-    const analyse = { tellinger, klassifisering: klass.per_turn, tema: body.topic || "" }
-    const total_score = scoreFraAnalyse(analyse as any)
-    return new Response(JSON.stringify({ ...analyse, total_score }), { status: 200, headers: { "Content-Type": "application/json" } })
+
+    const aapne = tellinger.aapne
+    const lukkede = tellinger.lukkede
+    const spTot = Math.max(0, tellinger.spørsmålTotalt || 0)
+    const reflE = tellinger.refleksjonEnkel
+    const reflK = tellinger.refleksjonKompleks
+    const reflTot = Math.max(0, tellinger.refleksjonerTotalt || 0)
+    const sums = tellinger.oppsummeringer
+    const affs = tellinger.bekreftelser
+
+    const ratios = {
+      open_question_share: spTot ? aapne / spTot : 0,
+      reflection_to_question: spTot ? reflTot / spTot : 0,
+      complex_reflection_share: reflTot ? reflK / reflTot : 0
+    }
+
+    const counts = {
+      open_questions: aapne,
+      closed_questions: lukkede,
+      reflections_simple: reflE,
+      reflections_complex: reflK,
+      summaries: sums,
+      affirmations: affs
+    }
+
+    const analysisLike = {
+      counts,
+      ratios,
+      length: { student_turns: base.filter(t => t.speaker === "jobbkonsulent").length },
+      topics: { topic_shifts: 0 }
+    } as any
+
+    const total_score = scoreFromAnalysis(analysisLike)
+
+    const resultat = {
+      tellinger,
+      klassifisering: klass.per_turn,
+      tema: body.topic || "",
+      total_score
+    }
+
+    return new Response(JSON.stringify(resultat), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    })
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e?.message || "Ukjent feil" }), { status: 500 })
   }
