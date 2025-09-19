@@ -1,8 +1,5 @@
 // lib/mi_prompt.ts
 
-/* ---------------------------------------------------------
- * Typer og grunnstrukturer
- * --------------------------------------------------------- */
 export type Rolle = "jobbkonsulent" | "jobbsøker"
 
 export type RåYtring = {
@@ -30,11 +27,9 @@ export type KlassifiseringSvar = {
   per_turn: KlassifiseringRad[]
 }
 
-/* ---------------------------------------------------------
- * Prompt (norsk) – kun Jobbkonsulent / Jobbsøker
- * --------------------------------------------------------- */
+/* ---------- Systemprompt (forbedret — bruker «tur» konsekvent) ---------- */
 export const MI_KLASSIFISERING_PROMPT_NB = `
-Du er en fagfellevurdert ekspert i Motiverende Intervju (MI). Du skal analysere en samtale mellom en jobbkonsulent og en jobbsøker og merke hver ytring fra jobbkonsulenten etter OARS-kategoriene. Formålet er presis og konsistent merking, uten dobbelttelling og med riktig avgrensning per ytring. Returner kun JSON i formatet spesifisert nederst.
+Du er en fagfellevurdert ekspert i Motiverende Intervju (MI). Du analyserer en samtale mellom en jobbkonsulent og en jobbsøker og skal merke hver tur fra jobbkonsulenten etter OARS-kategoriene. Målet er presis, konsistent merking uten dobbelttelling. Returner KUN gyldig JSON i formatet som spesifiseres nederst (uten forklaringer).
 
 Kategorier
 1) åpne spørsmål
@@ -45,46 +40,43 @@ Kategorier
 6) oppsummeringer
 
 Definisjoner
-Åpent spørsmål: inviterer til utforsking med hva, hvordan, hvilke, fortell mer, hva tenker du om …, og kan ikke besvares med ja/nei, ett ord, ett tall eller en kort faktabit. Spørsmålstegn er verken nødvendig eller tilstrekkelig. Eksempler: "Hva la du merke til da det fungerte?", "Hvordan vil du gripe det an i uka som kommer?", "Hvilke alternativer ser du nå?"
-Lukket spørsmål: kan typisk besvares med ja/nei, et tall, en dato eller en kort avklaring. Inkluderer også modale bekreftelsesspørsmål som "stemmer det at …?". Eksempler: "Kom du deg ut i går?", "Var det tirsdag du hadde samtalen?", "Skal du starte i dag?"
-Bekreftelse: eksplisitt og konkret anerkjennelse av innsats, styrker, verdier eller fremgang hos jobbsøkeren. Den peker på observerbar atferd eller verdibasert kvalitet og gjentar ikke innhold som speiling. Eksempler: "Du valgte å prøve selv om det kostet.", "Det er målrettet og modig.", "Du prioriterte søvn selv om det var vanskelig."
-Refleksjon – enkel: gjengir eller parafraserer jobbsøkerens innhold uten å legge til ny mening, følelse eller tosidighet. Eksempel: Jobbsøker: "Jeg blir stressa på kvelden." Jobbkonsulent: "Kveldene er stressende."
-Refleksjon – kompleks: legger til mening/følelse/tosidighet eller beveger seg ett ledd utover jobbsøkerens ord. Eksempler: "Du kjenner både behov for ro og dragning mot det kjente mønsteret.", "Det høres sårbart ut når det blir stille.", "En del av deg vil forandre, samtidig som en annen del vil holde fast."
-Oppsummering: en komprimert, strukturert rekapitulering av tidligere innhold fra samtalen som binder sammen flere elementer (tema, triggere, verdier, tiltak, neste steg). Forekommer typisk i overganger og mot slutten av et tema/økten. Kan signalisere med uttrykk som "for å oppsummere", "så langt har jeg hørt", "hvis jeg forstår deg", men markørord er ikke påkrevd. En oppsummering kan bestå av flere setninger i samme ytring; hele ytringen regnes da som én oppsummering. Høflig hilsen ("takk for samarbeidet") eller motivasjon ("jeg heier på deg") er ikke i seg selv oppsummering, men kan sameksistere i ytringen.
+Åpent spørsmål: inviterer til utforsking (hva, hvordan, hvilke, «fortell mer …» osv.), og kan ikke besvares med ja/nei, ett ord, ett tall eller en kort faktabit. Spørsmålstegn er verken nødvendig eller tilstrekkelig.
+Lukket spørsmål: kan typisk besvares med ja/nei, ett ord, tall/dato eller kort avklaring. Inkluderer bekreftelses-/kontrollspørsmål (f.eks. «stemmer det at …?»).
+Bekreftelse: eksplisitt og konkret anerkjennelse av innsats, styrker, verdier eller fremgang hos jobbsøkeren. Hovedfunksjonen er å anerkjenne (ikke å speile).
+Refleksjon – enkel: speiler/parafraserer jobbsøkerens innhold uten å legge til ny mening, følelse eller tosidighet.
+Refleksjon – kompleks: tilføyer mening/følelse/tosidighet eller går ett ledd utover jobbsøkerens ord (f.eks. dobbelsidig refleksjon, emosjon/verdier/fortolkning).
+Oppsummering: en strukturert, komprimert rekapitulering av tidligere innhold i samtalen som binder sammen flere elementer (tema, triggere, verdier, tiltak, neste steg). Typisk ved overganger og slutten av tema/økt. Markørord (f.eks. «for å oppsummere») kan forekomme, men er ikke nødvendige. En oppsummering kan bestå av flere setninger i samme tur; HELE turen telles da som ÉN oppsummering.
 
-Prioriterings- og avgrensningsregler
-A) Én ytring kan ha flere kategorier samtidig med disse begrensningene:
-  A1) Oppsummering telles maks én gang per ytring, uansett antall setninger. Ikke del opp en oppsummering i flere når den hører sammen.
-  A2) Oppsummering + spørsmål kan sameksistere i samme ytring. Merk oppsummering én gang og spørsmål én gang.
-  A3) Spørsmål + refleksjon kan sameksistere i samme ytring. Merk begge hvis begge faktisk forekommer.
-  A4) Bekreftelse vs refleksjon: dersom ytringens hovedfunksjon er anerkjennelse av innsats/verdier, merk bekreftelse og ikke refleksjon, selv om ordlyden har et speilende preg. Dersom hovedfunksjonen er speiling/utvidelse av innhold, merk refleksjon (enkel/kompleks) og ikke bekreftelse.
-  A5) Enkel vs kompleks refleksjon er gjensidig utelukkende i samme ytring. Velg den mest presise.
-B) Deling/segmentering:
-  B1) Del aldri en oppsummering i flere innen samme ytring. Hele rekapitulasjonen i ytringen inngår i én oppsummering.
-  B2) Ikke merk korte overgangsfraser alene ("ok", "mm", "takk") som bekreftelse eller refleksjon uten egen funksjon.
-  B3) Ikke tell avslutningshilsen som oppsummering.
+Prioriterings- og avgrensningsregler (svært viktige)
+A) Én tur kan ha flere kategorier samtidig, men:
+  A1) Oppsummering telles maks én gang per tur (selv om den består av flere setninger). DEL ALDRI oppsummering i flere innen samme tur.
+  A2) Hvis en tur er oppsummering, teller den som oppsummering og IKKE som refleksjon (enkel/kompleks). Oppsummering + spørsmål kan sameksistere (begge settes true).
+  A3) Enkel vs. kompleks refleksjon er gjensidig utelukkende i samme tur. Velg den mest presise (kompleks hvis kriteriene er oppfylt).
+  A4) Bekreftelse vs. refleksjon: dersom hovedfunksjonen er å ANERKJENNE (mestring, innsats, verdier), merk bekreftelse=true og refleksjon=false (både enkel og kompleks). Dersom hovedfunksjonen er speiling/utvidelse av innhold, merk refleksjon (enkel eller kompleks) og bekreftelse=false.
+B) Segmentering:
+  B1) Ikke tell korte fyll- eller høflighetsfraser alene («ok», «mm», «takk») som bekreftelse/refleksjon.
+  B2) Høflig avslutning («takk for godt samarbeid», «jeg heier på deg») i samme tur som en rekapitulering gjør turen til ÉN oppsummering (affirmation kan også settes true dersom det faktisk er en anerkjennelse).
 C) Spørsmål:
-  C1) Dersom en ytring inneholder både et åpent og et lukket spørsmål, merk begge som true.
-  C2) En setning som starter åpent, men lukkes med "er det riktig?" skal telles som lukket i tillegg.
-D) Tellelogikk:
+  C1) En tur kan inneholde både åpent og lukket spørsmål; sett begge til true i så fall.
+  C2) En setning som starter åpent men lukkes med en bekreftelse/kontroll («er det riktig?») gir både open_question=true og closed_question=true.
+D) Telling:
   D1) SpørsmålTotalt = åpne + lukkede.
   D2) RefleksjonerTotalt = enkle + komplekse.
-  D3) Oppsummeringer = antall ytringer med summary=true.
-E) Disambiguering for oppsummering:
-  E1) Oppsummering foreligger når minst to av følgende er sanne i samme ytring: binder sammen flere elementer fra tidligere i samtalen; skaper struktur ("så langt", "du nevnte … og …, og du vil …"); leder til overgang eller lukker et tema; fremhever endringssnakk eller beslutning.
-  E2) Markørord styrker sannsynligheten, men er ikke nødvendig.
-  E3) Ytring med faglig rekapitulering etterfulgt av høflig avslutning skal merkes som én oppsummering for hele rekapitulasjonen.
+  D3) Oppsummeringer = antall turer med summary=true.
+E) Oppsummering bestemmes slik:
+  E1) Oppsummering foreligger når minst to av disse er sanne i samme tur: (i) binder sammen flere tidligere elementer; (ii) bruker struktur- eller overgangsknyttere («så langt», «du nevnte … og …, og du vil …»); (iii) markerer skifte/avslutning; (iv) fremhever endringssnakk/valg/neste steg.
+  E2) Markørord øker sannsynlighet, men er ikke nødvendig.
+  E3) En hel tur som rekapitulerer flere punkter telles som ÉN oppsummering, selv hvis oppsummeringen består av flere setninger. Ikke del den i flere.
 
-Korrekte eksempler
-1) "Hva vil være et lite første steg du kan teste i kveld?" → open_question=true
-2) "Var det tirsdag du ringte NAV?" → closed_question=true
-3) "Du holdt avtalen selv om det var tungt." → affirmation=true
-4) Jobbsøker: "Jeg utsetter." Jobbkonsulent: "Det blir lett å skyve foran deg." → reflection_simple=true
-5) Jobbsøker: "Jeg utsetter." Jobbkonsulent: "En del av deg vil i gang, og samtidig blir det tryggere å vente." → reflection_complex=true
-6) "For å oppsummere: du vil ha ro uten å drikke. Du har identifisert triggere og valgt tiltak som matcher. Du starter i dag." → summary=true (én forekomst for hele ytringen). "Jeg heier på deg." kan i tillegg merkes som affirmation=true i samme ytring.
+Eksempler (konsise)
+– «Hva vil være et lite første steg i kveld?» → open_question=true
+– «Var det tirsdag du ringte NAV?» → closed_question=true
+– «Du holdt avtalen selv om det var tungt.» → affirmation=true
+– Jobbsøker: «Jeg utsetter.» Jobbkonsulent: «Det blir lett å skyve foran deg.» → reflection_simple=true
+– Jobbsøker: «Jeg utsetter.» Jobbkonsulent: «En del av deg vil i gang, samtidig som det kjennes tryggere å vente.» → reflection_complex=true
+– «For å oppsummere: du vil ha ro uten å drikke. Du har identifisert triggere og valgt tiltak som matcher. Du starter i dag. Jeg heier på deg.» → summary=true (én oppsummering for hele turen), affirmation=true kan også være true i samme tur.
 
-Outputformat
-Returner JSON med:
+Outputformat (KUN JSON)
 {
   "per_turn": [
     {
@@ -103,174 +95,136 @@ Returner JSON med:
 }
 
 Instruksjoner
-– Merk kun ytringer fra jobbkonsulent.
-– Ikke del opp oppsummering innen samme ytring.
-– Ikke dobbelttell bekreftelse som refleksjon hvis hovedfunksjonen er anerkjennelse.
-– Vær konsekvent. Returner kun JSON, ingen fritekst.
+– Merk KUN turer fra jobbkonsulent.
+– Ikke del oppsummering i flere innen samme tur.
+– Oppsummering «vinner» over refleksjoner (refleksjoner=false hvis summary=true). Spørsmål kan sameksistere.
+– Bekreftelse og refleksjon er gjensidig utelukkende; velg den som best beskriver hovedfunksjonen.
+– Vær konsistent. Returner KUN gyldig JSON-objekt, ingen fritekst.
 `
 
-/* ---------------------------------------------------------
- * Inndata til modellen
- * --------------------------------------------------------- */
+/* ---------- Inndata til modellen ---------- */
 export function byggAnalyseInndata(transkript: { speaker: Rolle; text: string }[]) {
   const turns = transkript.map((t, i) => ({ index: i, speaker: t.speaker, text: t.text }))
-  // Vi sender *kun* transkriptet – prompten over forklarer oppgaven og formatet
   return JSON.stringify({ transcript: turns })
 }
 
-/* ---------------------------------------------------------
- * Etterprosessering: robust, én oppsummering per ytring
- * + disambiguering bekreftelse vs refleksjon
- * --------------------------------------------------------- */
-
-function _norm(s: string) { return (s || "").toLowerCase().trim() }
-function _hasAffirmationCue(txt: string) {
-  const t = _norm(txt)
-  // Typiske anerkjennelses-/styrke-ord og mønstre
-  return /(bra|flott|sterkt|imponerende|fint|godt jobbet|målrettet|modig|klokt|nyttig|du valgte|du prioriterte|du holdt|du prøvde|takk for innsatsen)/i.test(t)
-}
-function _hasReflectionCue(txt: string) {
-  const t = _norm(txt)
-  // Vanlige speilings-/metaspråkmarkører
-  return /(du sier|du opplever|høres.*ut|virker som|på den ene siden|samtidig som|det betyr at|det høres .* ut)/i.test(t)
-}
-function _hasSummaryCue(txt: string) {
-  const t = _norm(txt)
-  return /(for å oppsummere|for å summere|oppsummert|kort sagt|så langt har jeg hørt|hvis jeg forstår deg|med andre ord)/i.test(t)
-}
-function _looksLikeMultiElementRecap(txt: string) {
-  // Grovt mål: flere komma/semikolon/punktum + «og»/listepreg + beslutning/neste steg
-  const t = txt.trim()
-  const items = t.split(/[.;·•–—]/).filter(s => s.trim().length > 0).length
-  const hasAnd = /\bog\b/i.test(t)
-  const hasDoOrPlan = /(du vil|du skal|neste steg|starter i dag|planen er|tiltak)/i.test(t)
-  // Minst to setningsbiter + litt struktur
-  return (items >= 2 && (hasAnd || hasDoOrPlan))
-}
-function _isLikelySummary(txt: string) {
-  return _hasSummaryCue(txt) || _looksLikeMultiElementRecap(txt)
-}
-function _isTrailingQuestion(txt: string) {
-  // Tillat at ytring ender i et spørsmål etter oppsummeringen, uten å skape ny oppsummering
-  return /[?？]\s*$/.test(txt.trim())
-}
-function _startsOpen(txt: string) {
-  return (/^\s*(hva|hvordan|hvilke|fortell|kan du fortelle|hva tenker du)/i).test(txt.trim())
-}
-
+/* ---------- Etterbehandling (streng konfliktløsning + «oppsummering én per tur») ---------- */
 export function etterbehandleKlassifisering(transkript: RåYtring[], svar: KlassifiseringSvar): KlassifiseringSvar {
   const byIndex = new Map<number, RåYtring>()
-  for (const y of transkript) byIndex.set(y.index, y)
+  for (const t of transkript) byIndex.set(t.index, t)
 
-  const rader: KlassifiseringRad[] = []
+  const out: KlassifiseringRad[] = []
 
-  for (const rad of (svar?.per_turn || [])) {
-    const y = byIndex.get(rad.index)
-    if (!y) continue
-    if (y.speaker !== "jobbkonsulent") continue
+  for (const row of (svar.per_turn || [])) {
+    const orig = byIndex.get(row.index)
+    if (!orig || orig.speaker !== "jobbkonsulent") continue
 
-    // Start med det modellen ga
-    const l = { ...rad.labels }
+    const L: KlassifiseringEtiketter = { ...row.labels }
 
-    // 1) Enkel vs kompleks refleksjon – gjensidig utelukkende (prioriter kompleks)
-    if (l.reflection_simple && l.reflection_complex) {
-      l.reflection_simple = false
+    const txtRaw = (orig.text || "")
+    const txt = txtRaw.toLowerCase()
+
+    // Heuristisk «failsafe»: hvis LLM glemmer å merke tydelig oppsummering, aktiver summary
+    const summaryMarkers = /(for å oppsummere|la meg oppsummere|så langt har jeg hørt|hvis jeg forstår deg|for å binde sammen)/i
+    const looksLikeMultiRecap =
+      (txtRaw.split(/[.!?；;]+/).filter(s => s.trim().length > 0).length >= 2) &&
+      /(du (?:har|nevnte|vil)|tiltak|neste steg|fremover|oppsummer)/i.test(txtRaw)
+
+    if (!L.summary && (summaryMarkers.test(txtRaw) || looksLikeMultiRecap)) {
+      L.summary = true
     }
 
-    // 2) Bekreftelse vs refleksjon – bruk hovedfunksjon i teksten
-    //    (a) hvis tydelig anerkjennelse uten klare speilingstegn → bekreftelse
-    //    (b) hvis tydelig speiling/utvidelse uten anerkjennelse → refleksjon
-    //    (c) hvis begge, prioriter bekreftelse *hvis ytringen primært roser innsats/verdier*,
-    //        ellers refleksjon (behold kompleks hvis markert)
-    const txt = y.text || ""
-    const hasAff = _hasAffirmationCue(txt)
-    const hasRefl = _hasReflectionCue(txt)
-
-    if (l.affirmation && (l.reflection_simple || l.reflection_complex)) {
-      if (hasAff && !hasRefl) {
-        l.reflection_simple = false
-        l.reflection_complex = false
-        l.affirmation = true
-      } else if (hasRefl && !hasAff) {
-        l.affirmation = false
+    // 1) Enkel vs kompleks refleksjon — gjensidig utelukkende
+    if (L.reflection_simple && L.reflection_complex) {
+      const harTosidighet = /på den ene siden|samtidig som|både.*og/.test(txt)
+      const harFølelseMening =
+        /(sårt|sårbart|vanskelig|tøft|urolig|rolig|stolt|modig|målrettet|betyr mye|viktig for deg|du kjenner|du står i)/.test(txt)
+      if (harTosidighet || harFølelseMening) {
+        L.reflection_simple = false
       } else {
-        // Begge til stede i tekst: vurder retning
-        if (hasAff && !l.reflection_complex) {
-          // Heller mot bekreftelse, dropp enkel refleksjon
-          l.reflection_simple = false
-        } else if (hasRefl && !hasAff) {
-          l.affirmation = false
+        L.reflection_complex = false
+      }
+    }
+
+    // 2) Bekreftelse vs refleksjon — velg hovedfunksjon (gjensidig utelukkende)
+    if (L.affirmation && (L.reflection_simple || L.reflection_complex)) {
+      const praiseLike =
+        /(bra|flott|sterkt|imponerende|fint|godt jobbet|målrettet|modig|stått i det|du valgte|du prioriterte|du holdt|du gjennomførte|det er sterkt|det er modig)/.test(
+          txt
+        )
+      const mirroringLike =
+        /(du sier|du opplever|det høres|høres .* ut|virker som|du kjenner|du står i|på den ene siden|samtidig som)/.test(
+          txt
+        )
+
+      if (praiseLike && !mirroringLike) {
+        L.reflection_simple = false
+        L.reflection_complex = false
+      } else if (mirroringLike && !praiseLike) {
+        L.affirmation = false
+      } else {
+        // blandet – velg dominerende mønster
+        const lenPraise = (txt.match(/(bra|flott|sterkt|imponerende|fint|godt jobbet|målrettet|modig|du valgte|du prioriterte|du holdt|du gjennomførte)/g) || []).length
+        const lenMirror = (txt.match(/(du sier|du opplever|høres|virker som|på den ene siden|samtidig som)/g) || []).length
+        if (lenPraise > lenMirror) {
+          L.reflection_simple = false
+          L.reflection_complex = false
+        } else {
+          L.affirmation = false
         }
       }
     }
 
-    // 3) Oppsummering – maks én per ytring.
-    //    Hvis modellen ikke fanget opp, men teksten sannsynligvis er oppsummering → sett summary=true.
-    //    Tillat samtidig spørsmål på slutten (åpent/lukket).
-    if (l.summary) {
-      l.summary = true // maks én per ytring er implisitt i booleansk modell
-    } else if (_isLikelySummary(txt)) {
-      l.summary = true
+    // 3) Oppsummering «vinner» over refleksjoner (men spørsmål kan sameksistere)
+    if (L.summary) {
+      // Sørg for at oppsummering er én per tur (ikke del i flere)
+      L.reflection_simple = false
+      L.reflection_complex = false
     }
 
-    // 4) Åpent vs lukket – bevar begge hvis begge faktisk forekommer.
-    //    Hvis modellen har begge, men ytringen starter helt åpent og ikke slutter med «er det …?»,
-    //    så kan vi la begge stå (reglen i prompten sier at begge kan sameksistere).
-    if (l.open_question && l.closed_question) {
-      const primærtÅpent = _startsOpen(txt)
-      const harLukkersuffix = /[.!?]\s*(er det|stemmer det|ikke sant)\??\s*$/i.test(txt)
-      // Bevar begge – men om den ser klart åpen uten lukkersuffix, dropp lukket
-      if (primærtÅpent && !harLukkersuffix) {
-        l.closed_question = false
+    // 4) Åpent + lukket samtidig – behold begge (C1), men gjør liten avklaring for «primært åpent»
+    if (L.open_question && L.closed_question) {
+      const starterÅpent = /^(hva|hvordan|hvilke|fortell|kan du fortelle|hva tenker du)/i.test(txtRaw.trim())
+      const harKontrollhale = /[.!?]\s*(er det|stemmer det|ikke sant)\??\s*$/i.test(txtRaw)
+      if (starterÅpent && !harKontrollhale) {
+        // behold begge som true (regel C1) – ingen endring
       }
     }
 
-    // 5) Hvis både summary og spørsmål finnes: behold begge (A2).
-    //    Hvis oppsummeringen avsluttes med et spørsmål i halen, lar vi det stå.
-    if (l.summary && _isTrailingQuestion(txt)) {
-      // Ingen endring – kun dokumentert at dette er lov
+    // 5) Ikke gi summary mer enn én gang per tur (kommer per turn allerede – vi sikrer likevel)
+    if (L.summary) {
+      L.summary = true
     }
 
-    rader.push({
-      index: y.index,
-      speaker: y.speaker,
-      labels: {
-        open_question: !!l.open_question,
-        closed_question: !!l.closed_question,
-        affirmation: !!l.affirmation,
-        reflection_simple: !!l.reflection_simple,
-        reflection_complex: !!l.reflection_complex,
-        summary: !!l.summary
-      }
-    })
+    out.push({ index: orig.index, speaker: "jobbkonsulent", labels: L })
   }
 
-  return { per_turn: rader }
+  return { per_turn: out }
 }
 
-/* ---------------------------------------------------------
- * Tellinger – én oppsummering per ytring
- * --------------------------------------------------------- */
+/* ---------- Tellinger (robust) ---------- */
 export function tellingerFraKlassifisering(svar: KlassifiseringSvar) {
-  let aapne = 0, lukkede = 0, bekreftelser = 0, reflEnkel = 0, reflKompleks = 0, oppsummeringer = 0
+  let aapne = 0
+  let lukkede = 0
+  let bekreftelser = 0
+  let reflEnkel = 0
+  let reflKompleks = 0
+  let oppsummeringer = 0
 
-  for (const r of (svar?.per_turn || [])) {
+  for (const r of (svar.per_turn || [])) {
     if (r.speaker !== "jobbkonsulent") continue
-    const l = r.labels || ({} as KlassifiseringEtiketter)
 
-    if (l.open_question) aapne++
-    if (l.closed_question) lukkede++
-    if (l.affirmation) bekreftelser++
-
-    // Enkel og kompleks er gjensidig utelukkende (sikret i etterbehandling),
-    // men om begge skulle være true (uventet), prioriter kompleks og tell kun den.
-    if (l.reflection_complex) {
-      reflKompleks++
-    } else if (l.reflection_simple) {
-      reflEnkel++
+    // summary teller alltid bare én (og «vinner» over refleksjoner i tallene)
+    if (r.labels.summary) {
+      oppsummeringer++
+    } else {
+      if (r.labels.reflection_simple) reflEnkel++
+      if (r.labels.reflection_complex) reflKompleks++
     }
 
-    if (l.summary) oppsummeringer++ // maks 1 per ytring, slik vi ønsker
+    if (r.labels.affirmation) bekreftelser++
+    if (r.labels.open_question) aapne++
+    if (r.labels.closed_question) lukkede++
   }
 
   const spørsmålTotalt = aapne + lukkede
