@@ -1,260 +1,578 @@
 // app/api/report/route.ts
-import { NextRequest } from "next/server"
-import { scoreFromAnalysis, type Analysis } from "@/lib/report"
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-export const runtime = "nodejs"
+import { NextRequest, NextResponse } from "next/server";
+import { scoreFromAnalysis, generateFeedback } from "@/lib/report";
+import type { Analysis } from "@/lib/types";
 
-const clamp100 = (n: number) => Math.max(0, Math.min(100, Math.round(n)))
-const esc = (s: string) =>
-  (s ?? "").toString().replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string))
+/* ------------------------ Utils ------------------------ */
+function esc(s: unknown) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+const clamp = (n: number, min = 0, max = 100) =>
+  Math.max(min, Math.min(max, n));
+const norm = (s: string) => (s || "").toLowerCase().trim();
 
-function scoreBand(score: number) {
-  if (score >= 85) return { label: "Svært høy MI-kvalitet", color: "#14532d", bg: "#dcfce7" }
-  if (score >= 70) return { label: "Høy MI-kvalitet", color: "#166534", bg: "#ecfdf5" }
-  if (score >= 55) return { label: "God MI, utviklingspotensial", color: "#1d4ed8", bg: "#eff6ff" }
-  if (score >= 40) return { label: "Ustabil MI – juster teknikk", color: "#a16207", bg: "#fef3c7" }
-  return { label: "Lav MI-kvalitet – fokuser grunnferdigheter", color: "#991b1b", bg: "#fee2e2" }
+/* ------------------------ Tema-gruppering ------------------------ */
+const BANNED = new Set([
+  "annet",
+  "other",
+  "diverse",
+  "ukjent",
+  "-",
+  "avslutning",
+  "slutt",
+  "closing",
+  "oppsummering",
+  "intro",
+  "oppstart",
+  "start",
+  "smalltalk",
+  "hilsen",
+  "hilsing",
+  "prat",
+  "samtale",
+]);
+
+const RELATED: Record<string, string[]> = {
+  jobbambivalens: [
+    "jobb",
+    "arbeid",
+    "lønn",
+    "stilling",
+    "deltid",
+    "heltid",
+    "praksis",
+    "opptrapping",
+    "trygd",
+    "ytelser",
+    "nav",
+    "aap",
+    "dagpenger",
+    "pensjon",
+    "tilrettelegging",
+    "arbeidsevne",
+    "kapasitet",
+    "helse",
+    "utbrenthet",
+    "stress",
+  ],
+  "manglende oppmøte": [
+    "oppmøte",
+    "møter",
+    "for sent",
+    "fravær",
+    "avtaler",
+    "telefon",
+    "varsling",
+    "rutiner",
+    "årsaker",
+    "hindringer",
+    "transport",
+    "søvn",
+    "motivasjon",
+  ],
+  "redusere rusbruk": [
+    "rus",
+    "alkohol",
+    "cannabis",
+    "hasj",
+    "piller",
+    "substanser",
+    "kontroll",
+    "abstinens",
+    "bakrus",
+    "triggere",
+    "mengde",
+    "hyppighet",
+  ],
+  "aggressiv atferd": [
+    "konflikt",
+    "krangel",
+    "sinte reaksjoner",
+    "utbrudd",
+    "grenser",
+    "trigger",
+    "regler",
+    "kollega",
+    "kunde",
+    "tillit",
+    "advarsel",
+    "oppsigelse",
+  ],
+};
+
+function groupForReport(
+  selectedMain: string,
+  otherTopics: string[] = [],
+  byTurn: { turnIndex: number; topic: string }[] = []
+) {
+  const main = norm(selectedMain);
+  const related = new Set((RELATED[main] || []).map(norm));
+
+  const othersSet = new Set<string>();
+  for (const t of otherTopics) {
+    const tn = norm(t);
+    if (!tn || BANNED.has(tn)) continue;
+    if (tn === main || related.has(tn)) continue;
+    othersSet.add(tn);
+  }
+
+  let shifts = 0;
+  let prev = "";
+  for (const row of byTurn || []) {
+    const tn = norm(row.topic);
+    if (!tn || BANNED.has(tn)) continue;
+    const grouped = tn === main || related.has(tn) ? main : tn;
+    if (prev && grouped !== prev) shifts++;
+    prev = grouped;
+  }
+
+  return {
+    mainLabel: selectedMain || "—",
+    others: Array.from(othersSet),
+    shifts,
+  };
 }
 
+/* ------------------------ Skårtekst + skala ------------------------ */
+function scoreBandText(score: number) {
+  if (score >= 80) return "Meget god OARS-bruk.";
+  if (score >= 60) return "God OARS-bruk – noen forbedringspunkter.";
+  if (score >= 40) return "På vei – styrk refleksjoner/bekreftelser/korte oppsummeringer.";
+  return "Trenger mer systematikk i OARS.";
+}
+
+/* Viktig: chippen ligger utenfor .bar (i .bar-wrap) for å ikke bli klippet */
 function scoreScaleHTML(score: number, bandText: string) {
-  const s = clamp100(score)
-  const segs = Array.from({ length: 10 }, (_, i) => {
-    const left = i * 10
-    const w = 10
-    const color =
-      i < 4 ? "#fee2e2" :
-      i < 5 ? "#fef3c7" :
-      i < 7 ? "#eff6ff" :
-      i < 8 ? "#ecfdf5" :
-              "#dcfce7"
-    return `<div class="seg" style="left:${left}%;width:${w}%;background:${color}"></div>`
-  }).join("")
-  const minor = Array.from({ length: 100 }, (_, i) => `<div class="tick m" style="left:${i + 1}%"></div>`).join("")
-  const major = Array.from({ length: 11 }, (_, i) => `<div class="tick M" style="left:${i * 10}%"></div>`).join("")
+  const s = clamp(score);
+  const segs = [
+    `<div class="seg red" style="left:0%; width:50%"></div>`,
+    `<div class="seg yellow" style="left:50%; width:30%"></div>`,
+    `<div class="seg green" style="left:80%; width:20%"></div>`,
+  ].join("");
+
+  const labelFor = (p: number) =>
+    p === 0 ? "Ingen"
+    : p === 20 ? "Lite"
+    : p === 40 ? "Moderat"
+    : p === 60 ? "God"
+    : p === 80 ? "Meget god"
+    : "Fullkommen";
+
+  const majors = [0, 20, 40, 60, 80, 100]
+    .map(
+      (p) => `
+      <div class="tick major" style="left:${p}%"></div>
+      <div class="tick-label" style="left:${p}%">
+        ${labelFor(p)}
+      </div>`
+    )
+    .join("");
+
+  const minors = [10, 30, 50, 70, 90]
+    .map((p) => `<div class="tick minor" style="left:${p}%"></div>`)
+    .join("");
 
   return `
   <div class="scale">
-    <div class="bar">
-      ${segs}
-      ${minor}
-      ${major}
-      <div class="score-marker" style="left:${s}%;">
+    <div class="bar-wrap">
+      <div class="bar">
+        ${segs}
+        ${minors}
+        ${majors}
+      </div>
+      <div class="score-marker" style="left:${s}%">
         <div class="score-chip">
-          <div class="score-chip-text">${s}/100</div>
+          <div class="score-chip-text">${esc(String(s))}/100</div>
           <div class="score-chip-arrow"></div>
         </div>
         <div class="score-pin"></div>
       </div>
     </div>
     <div class="bandtext">${esc(bandText)}</div>
-  </div>`
+  </div>`;
 }
 
-function legendHTML() {
-  return `
-  <div class="legend">
-    <div class="leg"><span class="sw" style="background:#fee2e2"></span>Lav</div>
-    <div class="leg"><span class="sw" style="background:#fef3c7"></span>Under mål</div>
-    <div class="leg"><span class="sw" style="background:#eff6ff"></span>OK</div>
-    <div class="leg"><span class="sw" style="background:#ecfdf5"></span>God</div>
-    <div class="leg"><span class="sw" style="background:#dcfce7"></span>Svært god</div>
-  </div>`
+/* ------------------------ Datagrunnlag ------------------------ */
+function hasSufficientData(a: Analysis): boolean {
+  const c = (a.counts || {}) as any;
+  const total =
+    (c.open_questions ?? 0) +
+    (c.closed_questions ?? 0) +
+    (c.reflections_simple ?? 0) +
+    (c.reflections_complex ?? 0) +
+    (c.affirmations ?? 0) +
+    (c.summaries ?? 0);
+  return total >= 5;
 }
 
-type RowSpec = {
-  key: keyof NonNullable<Analysis["counts"]>
-  label: string
-  share?: string | null
-  shareLabel?: string
-  exampleKey?: keyof NonNullable<any>
-}
-
-function buildOARSRows(a: Analysis): RowSpec[] {
-  const c = a.counts || {}
-  const r = a.ratios || {}
-  return [
-    { key: "open_questions",     label: "Åpne spørsmål",         share: r.open_question_share != null ? `${Math.round((r.open_question_share || 0) * 100)} %` : null, exampleKey: "open_questions" },
-    { key: "closed_questions",   label: "Lukkede spørsmål",       share: null, exampleKey: "closed_questions" },
-    { key: "reflections_simple", label: "Enkle refleksjoner",     share: null, exampleKey: "reflections_simple" },
-    { key: "reflections_complex",label: "Komplekse refleksjoner", share: r.complex_reflection_share != null ? `${Math.round((r.complex_reflection_share || 0) * 100)} %` : null, exampleKey: "reflections_complex" },
-    // Vi viser samlet refleksjonsrate (refleksjoner pr. spørsmål) som egen linje (uten eksempler)
-    // NB: Ikke i counts, så vi lager en pseudo-rad under tabellen for tydelighet.
-    { key: "affirmations",       label: "Bekreftelser",           share: null, exampleKey: "affirmations" },
-    { key: "summaries",          label: "Oppsummeringer",         share: null, exampleKey: "summaries" },
-  ]
-}
-
-function examplesPopover(id: string, items: string[]) {
-  if (!items?.length) return ""
-  const lis = items.map(s => `<li>${esc(s)}</li>`).join("")
-  return `
-  <div class="ex-pop" id="${id}" role="dialog" aria-hidden="true">
-    <div class="ex-pop-inner">
-      <div class="ex-pop-head">
-        <div>Eksempler</div>
-        <button class="ex-close" data-ex-close="${id}" aria-label="Lukk">&times;</button>
-      </div>
-      <ul class="ex-list">${lis}</ul>
-    </div>
-  </div>`
-}
-
-function oarsTableHTML(a: Analysis) {
-  const c = a.counts || {}
-  const r = a.ratios || {}
-  const rows = buildOARSRows(a)
-  const ex = (a as any)?.examples || {} // forventer evt. nøkler: open_questions, closed_questions, reflections_simple, reflections_complex, affirmations, summaries
-
-  const trs = rows.map((row, idx) => {
-    const val = (c as any)[row.key] ?? 0
-    const shareCell = row.share != null ? `<td class="share">${esc(row.share)}</td>` : `<td class="share">–</td>`
-    const key = row.exampleKey as string | undefined
-    const list = key ? (Array.isArray(ex[key]) ? (ex[key] as string[]) : []) : []
-    const exId = `ex_${row.key}_${idx}`
-    const btn = list.length ? `<button class="ex-btn" data-ex="${exId}">Vis eksempler (${list.length})</button>` : `<span class="ex-off">Ingen eksempler</span>`
-    const pop = list.length ? examplesPopover(exId, list) : ""
-    return `
-      <tr>
-        <td class="lbl">${esc(row.label)}</td>
-        <td class="val">${esc(String(val))}</td>
-        ${shareCell}
-        <td class="excell">${btn}${pop}</td>
-      </tr>`
-  }).join("")
-
-  const reflPerQ = (r.reflection_to_question ?? null)
-  const reflPerQRow = `
-    <tr class="sub">
-      <td class="lbl">Refleksjoner pr. spørsmål</td>
-      <td class="val">${esc(String((c.reflections_simple ?? 0) + (c.reflections_complex ?? 0)))}</td>
-      <td class="share">${reflPerQ != null ? esc((reflPerQ || 0).toFixed(2)) : "–"}</td>
-      <td class="excell"><span class="ex-off">—</span></td>
-    </tr>`
-
-  return `
-  <div class="card">
-    <div class="section-title">OARS-tellinger</div>
-    <table class="oars">
-      <thead>
-        <tr><th>Tiltak</th><th>Antall</th><th>Andel/Forhold</th><th style="width:165px"></th></tr>
-      </thead>
-      <tbody>
-        ${trs}
-        ${reflPerQRow}
-      </tbody>
-    </table>
-  </div>`
-}
-
-function baseCSS() {
-  return `
-  :root{--bg:#f6f8fb;--card:#fff;--line:#e5e7eb;--muted:#6b7280;--title:#111827}
-  *{box-sizing:border-box}
-  html,body{margin:0;padding:0;background:var(--bg);color:#111827;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;line-height:1.45}
-  .wrap{max-width:1000px;margin:24px auto;padding:0 16px}
-  .header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
-  .ttl{margin:0;font-size:26px;font-weight:800;color:var(--title)}
-  .badge{display:inline-flex;align-items:center;gap:8px;background:#eef2ff;border:1px solid #e5e7eb;border-radius:999px;padding:6px 10px;font-weight:600;font-size:12px;color:#3730a3}
-
-  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:12px 0;box-shadow:0 1px 2px rgba(0,0,0,.03)}
-  .section-title{font-weight:800;margin-bottom:8px}
-
-  .scale{padding:12px 4px}
-  .bar{position:relative;height:38px;border-radius:10px;border:1px solid var(--line);background:#fff;overflow:hidden}
-  .seg{position:absolute;top:0;bottom:0}
-  .tick.m{position:absolute;top:0;bottom:0;width:1px;background:rgba(0,0,0,.06)}
-  .tick.M{position:absolute;top:0;bottom:0;width:2px;background:rgba(0,0,0,.18)}
-  .bandtext{margin-top:8px;font-size:13px;color:var(--muted)}
-  .legend{display:flex;gap:8px;flex-wrap:wrap;font-size:12px;margin-top:8px}
-  .leg{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;border:1px solid var(--line);background:#fff}
-  .sw{width:10px;height:10px;border-radius:2px}
-
-  .score-marker{position:absolute;top:0;height:100%;transform:translateX(-50%);text-align:center;pointer-events:none}
-  .score-pin{position:absolute;top:0;bottom:0;left:50%;width:2px;background:#111827;opacity:.6;transform:translateX(-1px)}
-  .score-chip{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);background:#111827;color:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;white-space:nowrap;box-shadow:0 4px 10px rgba(17,24,39,.15)}
-  .score-chip-arrow{position:absolute;left:50%;bottom:-6px;transform:translateX(-50%);width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:6px solid #111827}
-
-  table.oars{width:100%;border-collapse:collapse;margin-top:8px}
-  table.oars th{font-size:12px;text-transform:uppercase;letter-spacing:.02em;color:#6b7280;border-bottom:1px solid var(--line);padding:8px;text-align:left}
-  table.oars td{padding:10px 8px;border-bottom:1px solid #f3f4f6;vertical-align:top}
-  table.oars td.lbl{font-weight:700}
-  table.oars tr.sub td{color:#374151;background:#fafafa}
-
-  .ex-btn{appearance:none;border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 8px;font-size:12px;cursor:pointer}
-  .ex-btn:hover{background:#f9fafb}
-  .ex-off{font-size:12px;color:#9ca3af}
-
-  .ex-pop{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.08);z-index:30}
-  .ex-pop[aria-hidden="false"]{display:flex}
-  .ex-pop-inner{background:#fff;border:1px solid var(--line);border-radius:12px;max-width:680px;width:calc(100% - 40px);max-height:70vh;overflow:auto;box-shadow:0 10px 24px rgba(0,0,0,.15)}
-  .ex-pop-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid var(--line);font-weight:800}
-  .ex-close{appearance:none;border:none;background:transparent;font-size:20px;cursor:pointer;line-height:1;padding:4px 8px}
-  .ex-list{margin:0;padding:12px 18px}
-  .ex-list li{margin:8px 0 8px 16px}
-  `
-}
-
-function scoreCardHTML(score: number) {
-  const band = scoreBand(score)
-  return `
-  <div class="card" style="border-color:${band.color}">
-    <div class="section-title">Totalscore</div>
-    ${scoreScaleHTML(score, band.label)}
-    ${legendHTML()}
-  </div>`
-}
-
-function headerHTML(topic: string) {
-  return `
-  <div class="header">
-    <h1 class="ttl">MI-rapport</h1>
-    <div>${topic ? `<span class="badge">Tema: ${esc(topic)}</span>` : ""}</div>
-  </div>`
-}
-
-function baseHTMLStart(css: string) {
-  return `<!doctype html><html lang="no"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>MI-rapport</title><style>${css}</style></head><body><div class="wrap">`
-}
-
-function baseHTMLEnd() {
-  return `</div><script>
-  document.addEventListener('click', (e) => {
-    const t = e.target
-    if (!(t instanceof Element)) return
-    const openBtn = t.closest('[data-ex]')
-    if (openBtn) {
-      const id = openBtn.getAttribute('data-ex')
-      const pop = id ? document.getElementById(id) : null
-      if (pop) pop.setAttribute('aria-hidden','false')
-    }
-    const closeBtn = t.closest('[data-ex-close]')
-    if (closeBtn) {
-      const id = closeBtn.getAttribute('data-ex-close')
-      const pop = id ? document.getElementById(id) : null
-      if (pop) pop.setAttribute('aria-hidden','true')
-    }
-    const pop = t.classList.contains('ex-pop') ? t : t.closest('.ex-pop')
-    if (pop && t === pop) pop.setAttribute('aria-hidden','true')
-  })
-  </script></body></html>`
-}
-
+/* ------------------------ POST ------------------------ */
 export async function POST(req: NextRequest) {
   try {
-    const { analysis: aInput, topic = "" } = await req.json()
-    const a: Analysis = aInput || {}
-    const score = typeof (a as any).total_score === "number" ? clamp100((a as any).total_score) : scoreFromAnalysis(a)
+    const body = await req.json().catch(() => ({}));
+    const analysis: Analysis = (body as any).analysis || ({} as any);
 
-    const parts: string[] = []
-    parts.push(baseHTMLStart(baseCSS()))
-    parts.push(headerHTML(topic))
-    parts.push(scoreCardHTML(score))
-    parts.push(oarsTableHTML(a))
-    parts.push(baseHTMLEnd())
+    // Viktig: topic kommer inn som `topic` (ikke selectedTopic)
+    const selectedTopic: string =
+      (body as any).topic ||
+      String(analysis?.topics?.primary_topic || "") ||
+      "";
 
-    const html = parts.join("")
-    return new Response(html, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } })
-  } catch (e) {
-    return new Response("Kunne ikke generere rapport (serverfeil).", { status: 500 })
+    const counts = analysis.counts || ({} as any);
+    const ratios = analysis.ratios || ({} as any);
+
+    const topicsSafe =
+      analysis.topics || {
+        primary_topic: selectedTopic || "",
+        other_topics: [] as string[],
+        topic_shifts: 0,
+        by_turn: [] as { turnIndex: number; topic: string }[],
+      };
+
+    const grouped = groupForReport(
+      selectedTopic || String(topicsSafe.primary_topic || ""),
+      topicsSafe.other_topics || [],
+      topicsSafe.by_turn || []
+    );
+
+    // Poeng (bruk rapportens skår om den er satt, ellers regn den ut)
+    const computed =
+      typeof analysis.total_score === "number"
+        ? analysis.total_score
+        : scoreFromAnalysis(analysis);
+
+    const total_score = clamp(Math.round(computed));
+    const bandText = scoreBandText(total_score);
+    const sufficient = hasSufficientData(analysis);
+
+    const fb =
+      analysis.feedback &&
+      (Array.isArray(analysis.feedback.strengths) ||
+        Array.isArray(analysis.feedback.improvements))
+        ? analysis.feedback
+        : sufficient
+        ? generateFeedback(analysis)
+        : { strengths: [], improvements: [], next_exercises: [] };
+
+    const ex = analysis.examples || {
+      open_questions: [],
+      closed_questions: [],
+      reflections_simple: [],
+      reflections_complex: [],
+      affirmations: [],
+      summaries: [],
+    };
+
+    const html = `<!doctype html>
+<html lang="no">
+<head>
+  <meta charset="utf-8" />
+  <title>Rapport fra MI-øvelse</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{
+      --text:#111827; --muted:#6b7280; --line:#e5e7eb; --brand:#1f2937; --bg:#ffffff;
+      --good:#065f46; --bad:#7f1d1d;
+      --red:#ef4444; --yellow:#f59e0b; --green:#10b981;
+      --barH: 35px;
+    }
+    body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
+    .wrap{ max-width:900px; margin:32px auto; padding:0 16px; }
+    h1{ margin:0 0 8px 0; }
+    .muted{ color:var(--muted); }
+    .card{ background:#fff; border:1px solid var(--line); border-radius:12px; padding:16px; margin-top:12px; }
+    table{ width:100%; border-collapse:collapse; }
+    th,td{ padding:8px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    .small{ font-size:14px; color:var(--muted); }
+    .section-title{ margin:0 0 16px 0; font-size:18px; } /* mer luft under overskrift */
+    .good{ color:var(--good); }
+    .bad{ color:var(--bad); }
+    .threecol th:nth-child(1), .threecol td:nth-child(1){ width: 40%; }
+    .threecol th:nth-child(2), .threecol td:nth-child(2){ width: 20%; white-space: nowrap; }
+    .threecol th:nth-child(3), .threecol td:nth-child(3){ width: 40%; color: var(--muted); }
+
+    /* ------- Skala ------- */
+    .scale { margin-top: 10px; position: relative; max-width: 760px; margin-left:auto; margin-right:auto; } /* smalere og sentrert */
+    .bar-wrap{
+      position: relative;
+      overflow: visible; /* chip kan flyte over linja */
+    }
+    .bar{
+      position: relative;
+      height: var(--barH);
+      border-radius: 8px;
+      overflow: hidden;              /* runde hjørner + klipp segmenter */
+      background: transparent;
+      box-shadow: inset 0 0 0 1px #11182712;
+      z-index: 0;
+    }
+    .seg{ position:absolute; top:0; height:100%; }
+    .seg.red{    background: var(--red); }
+    .seg.yellow{ background: var(--yellow); }
+    .seg.green{  background: var(--green); }
+
+    .tick{
+      position:absolute; top:0;
+      width:2px; height:100%;
+      transform: translateX(-1px);
+      background: #11182720;
+      pointer-events: none;
+      z-index: 0;
+    }
+    .tick.minor { opacity: 0.45; }
+    .tick.major { opacity: 0.8; }
+    .tick-label{
+      position:absolute;
+      top: calc(100% + 6px);
+      transform: translateX(-50%);
+      font-size: 11px; font-weight: 700; color: #111827;
+      white-space: nowrap; pointer-events: none;
+    }
+
+    /* Markør for score + chip over (ligger utenfor .bar) */
+    .score-marker{
+      position:absolute; top:0; height:100%;
+      transform: translateX(-50%);
+      text-align:center; pointer-events:none;
+      z-index: 2;
+    }
+    .score-pin{
+      position:absolute; top:0; bottom:0; left:50%;
+      width:2px; background:#111827; opacity:.6; transform: translateX(-1px);
+    }
+    .score-chip{
+      position:absolute; bottom: calc(100% + 8px); left:50%;
+      transform: translateX(-50%);
+      background:#111827; color:#fff; border-radius:8px; padding:6px 10px;
+      font-weight:800; font-size:12px; white-space:nowrap;
+      box-shadow: 0 4px 10px rgba(17,24,39,.15);
+      z-index: 3;
+    }
+    .score-chip-text{ position:relative; z-index:2; }
+    .score-chip-arrow{
+      position:absolute; left:50%; bottom:-6px; transform: translateX(-50%);
+      width: 0; height: 0; border-left: 6px solid transparent;
+      border-right: 6px solid transparent; border-top: 6px solid #111827;
+    }
+    .bandtext{ margin-top: 24px; font-size: 14px; color: var(--muted); }
+
+    /* OARS-eksempler */
+    .linkbtn{ background:none; border:none; color:#2563eb; cursor:pointer; padding:0; font-size:14px; text-decoration:underline; }
+    .examples{ display:none; margin-top:8px; }
+    .examples ul{ margin:6px 0 0 18px; padding:0; }
+    .examples li{ margin-bottom:4px; }
+    ul{ margin:8px 0 0 18px; padding:0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Rapport fra MI-øvelse</h1>
+
+    <div class="card">
+      <div class="section-title">Totalscore</div>
+      ${scoreScaleHTML(total_score, bandText)}
+    </div>
+
+    <div class="card">
+      <div class="section-title">OARS – telling</div>
+      <table class="threecol">
+        <tr><th>Type</th><th>Verdi</th><th>Forklaring/eksempler</th></tr>
+        <tr>
+          <td>Åpne spørsmål</td>
+          <td>${esc(counts.open_questions ?? 0)}</td>
+          <td>
+            Spørsmål som inviterer til utforsking.
+            ${(ex.open_questions?.length || 0)
+              ? `<button class="linkbtn" data-target="ex-open">Vis eksempler (${ex.open_questions.length})</button>`
+              : ""
+            }
+            <div id="ex-open" class="examples"><ul>${
+              (ex.open_questions || []).map((s: string) => `<li>${esc(s)}</li>`).join("")
+            }</ul></div>
+          </td>
+        </tr>
+        <tr>
+          <td>Lukkede spørsmål</td>
+          <td>${esc(counts.closed_questions ?? 0)}</td>
+          <td>
+            Ja/nei- eller korte faktaspørsmål.
+            ${(ex.closed_questions?.length || 0)
+              ? `<button class="linkbtn" data-target="ex-closed">Vis eksempler (${ex.closed_questions.length})</button>`
+              : ""
+            }
+            <div id="ex-closed" class="examples"><ul>${
+              (ex.closed_questions || []).map((s: string) => `<li>${esc(s)}</li>`).join("")
+            }</ul></div>
+          </td>
+        </tr>
+        <tr>
+          <td>Refleksjoner (enkle)</td>
+          <td>${esc(counts.reflections_simple ?? 0)}</td>
+          <td>
+            Gjenspeiler innhold i korte ordelag.
+            ${(ex.reflections_simple?.length || 0)
+              ? `<button class="linkbtn" data-target="ex-rs">Vis eksempler (${ex.reflections_simple.length})</button>`
+              : ""
+            }
+            <div id="ex-rs" class="examples"><ul>${
+              (ex.reflections_simple || []).map((s: string) => `<li>${esc(s)}</li>`).join("")
+            }</ul></div>
+          </td>
+        </tr>
+        <tr>
+          <td>Refleksjoner (komplekse)</td>
+          <td>${esc(counts.reflections_complex ?? 0)}</td>
+          <td>
+            Utvider/fortolker – går litt dypere.
+            ${(ex.reflections_complex?.length || 0)
+              ? `<button class="linkbtn" data-target="ex-rc">Vis eksempler (${ex.reflections_complex.length})</button>`
+              : ""
+            }
+            <div id="ex-rc" class="examples"><ul>${
+              (ex.reflections_complex || []).map((s: string) => `<li>${esc(s)}</li>`).join("")
+            }</ul></div>
+          </td>
+        </tr>
+        <tr>
+          <td>Bekreftelser</td>
+          <td>${esc(counts.affirmations ?? 0)}</td>
+          <td>
+            Styrke-/innsatsfokuserte utsagn.
+            ${(ex.affirmations?.length || 0)
+              ? `<button class="linkbtn" data-target="ex-aff">Vis eksempler (${ex.affirmations.length})</button>`
+              : ""
+            }
+            <div id="ex-aff" class="examples"><ul>${
+              (ex.affirmations || []).map((s: string) => `<li>${esc(s)}</li>`).join("")
+            }</ul></div>
+          </td>
+        </tr>
+        <tr>
+          <td>Oppsummeringer</td>
+          <td>${esc(counts.summaries ?? 0)}</td>
+          <td>
+            Bør brukes ved skifte/slutt. Refleksjon helt mot slutten tolkes som oppsummering.
+            ${(ex.summaries?.length || 0)
+              ? `<button class="linkbtn" data-target="ex-sum">Vis eksempler (${ex.summaries.length})</button>`
+              : ""
+            }
+            <div id="ex-sum" class="examples"><ul>${
+              (ex.summaries || []).map((s: string) => `<li>${esc(s)}</li>`).join("")
+            }</ul></div>
+          </td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Forholdstall</div>
+      <table class="threecol">
+        <tr><th>Type</th><th>Verdi</th><th>Forklaring/kommentar</th></tr>
+        <tr>
+          <td>Andel åpne spørsmål</td>
+          <td>${esc(Math.round((analysis.ratios?.open_question_share ?? 0) * 100))}%</td>
+          <td>Hvor stor andel av spørsmålene som er åpne.</td>
+        </tr>
+        <tr>
+          <td>Refleksjoner per spørsmål</td>
+          <td>${esc((analysis.ratios?.reflection_to_question ?? 0).toFixed(2))}</td>
+          <td>Hvor ofte du reflekterer relativt til hvor ofte du spør. Sikt mot ca. 0,8 eller høyere.</td>
+        </tr>
+        <tr>
+          <td>Andel komplekse refleksjoner</td>
+          <td>${esc(Math.round((analysis.ratios?.complex_reflection_share ?? 0) * 100))}%</td>
+          <td>Hvor stor andel av refleksjonene som er komplekse.</td>
+        </tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Tema</div>
+      <table class="threecol">
+        <tr><th>Type</th><th>Verdi</th><th>Forklaring/kommentar</th></tr>
+        <tr><td>Hovedtema</td><td>${esc(grouped.mainLabel)}</td><td>Basert på valgt tema før samtalen.</td></tr>
+        <tr><td>Andre tema berørt</td><td>${(grouped.others || []).length ? grouped.others.map(esc).join(", ") : "—"}</td><td>Nært beslektede begreper foldes inn i hovedtema.</td></tr>
+        <tr><td>Temaskifter (anslått)</td><td>${esc(grouped.shifts)}</td><td>Skifter etter at nærliggende begreper er gruppert inn.</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Tilbakemelding</div>
+      ${
+        hasSufficientData(analysis)
+          ? `
+            <div style="display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(280px,1fr));">
+              <div>
+                <strong>Dette fungerte godt</strong>
+                ${
+                  (fb?.strengths || []).length
+                    ? `<ul>${(fb!.strengths || []).map((s: string) => `<li class="good">${esc(s)}</li>`).join("")}</ul>`
+                    : `<div class="small muted">Ingen spesifikke styrker identifisert i denne økten.</div>`
+                }
+              </div>
+              <div>
+                <strong>Dette kan forbedres</strong>
+                ${
+                  (fb?.improvements || []).length
+                    ? `<ul>${(fb!.improvements || []).map((s: string) => `<li class="bad">${esc(s)}</li>`).join("")}</ul>`
+                    : `<div class="small muted">Ingen konkrete forbedringspunkter identifisert i denne økten.</div>`
+                }
+              </div>
+            </div>
+          `
+          : `
+            <div class="small muted">
+              Datagrunnlaget er for lite til å gi målrettet tilbakemelding.
+              Gjennomfør gjerne en lengre økt eller bruk flere OARS-tilnærminger for å få mer treffsikker rapport.
+            </div>
+          `
+      }
+    </div>
+
+    <div class="small muted" style="margin-top:12px">
+      Rapporten er veiledende og bør tolkes med faglig skjønn.
+    </div>
+  </div>
+
+  <script>
+    // Toggle for OARS-eksempler
+    document.querySelectorAll('.linkbtn').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        const id = btn.getAttribute('data-target');
+        const el = id ? document.getElementById(id) : null;
+        if (el) {
+          const open = el.style.display === 'block';
+          el.style.display = open ? 'none' : 'block';
+          if (!open) btn.textContent = 'Skjul eksempler';
+          else {
+            const txt = btn.textContent || '';
+            btn.textContent = txt.includes('Skjul') ? txt.replace('Skjul eksempler', 'Vis eksempler') : 'Vis eksempler';
+          }
+        }
+      });
+    });
+  </script>
+</body>
+</html>`;
+
+    return new NextResponse(html, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Report-Version": "v7-score-chip-visible",
+      },
+    });
+  } catch (err) {
+    console.error("Report route error:", err);
+    return new NextResponse("Kunne ikke generere rapport (serverfeil).", {
+      status: 500,
+    });
   }
 }
