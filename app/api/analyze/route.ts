@@ -1,122 +1,176 @@
 // app/api/analyze/route.ts
-export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
+import { NextRequest } from "next/server"
+import crypto from "crypto"
 
-import { NextRequest, NextResponse } from "next/server";
-import { scoreFromAnalysis, generateFeedback } from "@/lib/report";
-import type { Analysis, Topic, Turn } from "@/lib/types";
-
-// Hvis du har lib/oars.ts tilgjengelig (anbefalt):
 import {
-  tallyOARS,
-  basicRatios,
-  lengthStats,
-  collectOARSExamples,
-} from "@/lib/oars";
+  MI_KLASSIFISERING_PROMPT_NB_STRICT,
+  MI_KLASSIFISERING_PROMPT_NB_LITE,
+  byggAnalyseInndata,
+  etterbehandleKlassifisering,
+  tellingerFraKlassifisering,
+  type Rolle,
+  type RåYtring,
+  type KlassifiseringSvar
+} from "@/lib/mi_prompt"
+import { scoreFromAnalysis } from "@/lib/report"
 
-/* ------------------------ Hjelpere ------------------------ */
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
 
-function normSpeaker(s?: string): "jobbkonsulent" | "jobbsøker" {
-  const v = String(s || "").toLowerCase();
-  if (v.includes("konsulent")) return "jobbkonsulent";
-  if (v.includes("søker") || v.includes("soker")) return "jobbsøker";
-  // Fallback: alt som ikke er konsulent blir jobbsøker
-  return v === "user" ? "jobbkonsulent" : "jobbsøker";
+type InTurn = { speaker?: string; rolle?: string; text?: string; tekst?: string }
+type Body = { turns?: InTurn[]; topic?: string }
+
+function normSpeaker(x: string | undefined): Rolle {
+  const v = (x || "").toLowerCase()
+  if (v.includes("konsulent")) return "jobbkonsulent"
+  if (v.includes("søker") || v.includes("soker")) return "jobbsøker"
+  return v === "user" ? "jobbkonsulent" : "jobbsøker"
 }
 
-function toTurns(raw: any[]): Turn[] {
-  return (raw || [])
-    .map((t) => ({
+function tilTranskript(turns: InTurn[]): { speaker: Rolle; text: string }[] {
+  return (turns || [])
+    .map(t => ({
       speaker: normSpeaker(t.speaker ?? t.rolle),
-      text: String(t.text ?? t.tekst ?? "").trim(),
-      ts: t.ts ?? Date.now(),
+      text: (t.text ?? t.tekst ?? "").toString().trim()
     }))
-    .filter((t) => t.text.length > 0);
+    .filter(t => t.text.length > 0)
 }
 
-const TOPICS: Topic[] = [
-  "Jobbambivalens",
-  "Manglende oppmøte",
-  "Redusere rusbruk",
-  "Aggressiv atferd",
-];
+const FALLBACK_MODELLER = ["gpt-5-mini", "gpt-4o-mini", "gpt-4.1-mini"]
 
-function safeTopic(label?: string): Topic {
-  const v = String(label || "").trim();
-  return (TOPICS as string[]).includes(v) ? (v as Topic) : "Jobbambivalens";
+function sha256(s: string) {
+  return crypto.createHash("sha256").update(s, "utf8").digest("hex")
 }
 
-/* Veldig konservativ «temaanalyse»: holder primærtema, samler evt. enkle skift */
-function conservativeTopicAnalysis(
-  turns: Turn[],
-  primary: Topic
-): Analysis["topics"] {
-  return {
-    primary_topic: primary,
-    other_topics: [],
-    topic_shifts: 0,
-    by_turn: [],
-  };
+async function kallOpenAI(model: string, messages: any[], brukJsonModus: boolean) {
+  const body: any = { model, messages, temperature: 0 }
+  if (brukJsonModus) body.response_format = { type: "json_object" }
+
+  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body)
+  })
+
+  const text = await r.text()
+  if (!r.ok) {
+    const err = new Error(`OpenAI-feil ${r.status}: ${text}`)
+    ;(err as any).status = r.status
+    ;(err as any).raw = text
+    throw err
+  }
+  const j = JSON.parse(text)
+  const content = j?.choices?.[0]?.message?.content || "{}"
+  return content
 }
 
-/* ------------------------ GET ------------------------ */
-export async function GET() {
-  return NextResponse.json(
-    { ok: true, route: "analyze", version: "v4-report-restored" },
-    { headers: { "Cache-Control": "no-store" } }
-  );
+function skalFalleTilbakeUtenJsonFormat(rawErr: string) {
+  return /response_format|Unrecognized request argument|does not support/i.test(rawErr || "")
+}
+function erModellFeil(rawErr: string) {
+  return /model.*not.*found|unknown model|does not exist|not available/i.test(rawErr || "")
 }
 
-/* ------------------------ POST ------------------------ */
+async function kallLLM(base: { speaker: Rolle; text: string }[], prompt: string) {
+  const usr = { role: "user", content: byggAnalyseInndata(base) }
+  const sys = { role: "system", content: prompt }
+
+  const ønsket = process.env.OPENAI_MODEL || FALLBACK_MODELLER[0]
+  const kandidater = [ønsket, ...FALLBACK_MODELLER.filter(m => m !== ønsket)]
+  let sisteFeil: any = null
+
+  for (const modell of kandidater) {
+    try {
+      const content = await kallOpenAI(modell, [sys, usr], true)
+      try { return JSON.parse(content) as KlassifiseringSvar } catch {}
+    } catch (e: any) {
+      sisteFeil = e
+      const raw = String(e?.raw || e?.message || "")
+      if (skalFalleTilbakeUtenJsonFormat(raw)) {
+        try {
+          const sysFB = { role: "system", content: prompt + "\nSvar KUN med gyldig JSON-objekt." }
+          const content2 = await kallOpenAI(modell, [sysFB, usr], false)
+          return JSON.parse(content2) as KlassifiseringSvar
+        } catch (e2: any) { sisteFeil = e2 }
+      }
+      if (erModellFeil(raw)) continue
+    }
+  }
+  throw new Error(String(sisteFeil?.message || "Ukjent OpenAI-feil"))
+}
+
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}));
-    const turns = toTurns(body.turns || []);
-    const topic = safeTopic(body.topic);
+    if (!process.env.OPENAI_API_KEY) throw new Error("Mangler OPENAI_API_KEY")
 
-    if (!turns.length) {
-      return NextResponse.json(
-        { error: "Tomt transkript" },
-        { status: 400, headers: { "Cache-Control": "no-store" } }
-      );
+    const url = new URL(req.url)
+    const modeFromQuery = (url.searchParams.get("mode") || "").toLowerCase()
+    const modeFromEnv = (process.env.MI_PROMPT_MODE || "strict").toLowerCase()
+    const prompt_mode = (modeFromQuery === "lite" || modeFromQuery === "strict") ? modeFromQuery : modeFromEnv
+
+    const prompt = prompt_mode === "lite" ? MI_KLASSIFISERING_PROMPT_NB_LITE : MI_KLASSIFISERING_PROMPT_NB_STRICT
+    const prompt_sha256 = sha256(prompt)
+
+    const body = (await req.json().catch(() => ({}))) as Body
+    const base = tilTranskript(body.turns || [])
+    if (base.length === 0) {
+      return new Response(JSON.stringify({ error: "Tomt transkript" }), { status: 400 })
     }
 
-    // Heuristikk: OARS-telling, forholdstall, lengde, eksempler
-    const counts = tallyOARS(turns);
-    const ratios = basicRatios(counts);
-    const length = lengthStats(turns);
-    const examples = collectOARSExamples(turns); // <- fyller open/closed/reflections/affirmations/summaries
+    // Kjør modell
+    const rå = await kallLLM(base, prompt)
 
-    // Tema (konservativ forutsigbarhet)
-    const topics = conservativeTopicAnalysis(turns, topic);
+    // Etterbehandling og tellinger
+    const medIndex: RåYtring[] = base.map((t, i) => ({ index: i, speaker: t.speaker, text: t.text }))
+    const klass = etterbehandleKlassifisering(medIndex, rå)
+    const tellinger = tellingerFraKlassifisering(klass)
 
-    const base: Analysis = {
+    // Bygg analysis-like for scoring
+    const counts = {
+      open_questions: tellinger.aapne,
+      closed_questions: tellinger.lukkede,
+      reflections_simple: tellinger.refleksjonEnkel,
+      reflections_complex: tellinger.refleksjonKompleks,
+      summaries: tellinger.oppsummeringer,
+      affirmations: tellinger.bekreftelser
+    }
+    const ratios = {
+      open_question_share: (tellinger.spørsmålTotalt ? tellinger.aapne / tellinger.spørsmålTotalt : 0),
+      reflection_to_question: (tellinger.spørsmålTotalt ? (tellinger.refleksjonerTotalt) / tellinger.spørsmålTotalt : 0),
+      complex_reflection_share: (tellinger.refleksjonerTotalt ? tellinger.refleksjonKompleks / tellinger.refleksjonerTotalt : 0)
+    }
+    const analysisLike = {
       counts,
       ratios,
-      length,
-      topics,
-      client_language: { change_talk_examples: [], sustain_talk_examples: [] },
-      global_scores: {
-        partnership: 3,
-        empathy: 3,
-        cultivating_change_talk: 3,
-        softening_sustain_talk: 3,
-      },
-      total_score: 0,
-      difficulty: body.difficulty || undefined,
-      examples, // <- VIKTIG for "Vis eksempler"-lenkene i rapporten
-    };
+      length: { student_turns: base.filter(t => t.speaker === "jobbkonsulent").length },
+      topics: { topic_shifts: 0 }
+    } as any
 
-    // Poeng + feedback fra nye beregninger
-    base.total_score = scoreFromAnalysis(base);
-    base.feedback = generateFeedback(base);
+    const total_score = scoreFromAnalysis(analysisLike)
 
-    return NextResponse.json(base, { headers: { "Cache-Control": "no-store" } });
+    // NB: legg ved diagnosefelt
+    const resultat = {
+      prompt_mode,
+      prompt_sha256,
+      tellinger,
+      klassifisering: klass.per_turn,
+      tema: body.topic || "",
+      total_score
+    }
+
+    return new Response(JSON.stringify(resultat), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+        "X-Prompt-Mode": prompt_mode,
+        "X-Prompt-SHA256": prompt_sha256
+      }
+    })
   } catch (e: any) {
-    console.error("Analyze error:", e);
-    return NextResponse.json(
-      { error: e?.message || "Ukjent feil i analyze" },
-      { status: 500, headers: { "Cache-Control": "no-store" } }
-    );
+    return new Response(JSON.stringify({ error: e?.message || "Ukjent feil" }), { status: 500 })
   }
 }
