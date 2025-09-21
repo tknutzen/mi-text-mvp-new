@@ -162,3 +162,6 @@ export function tellingerFraKlassifisering(svar: KlassifiseringSvar) {
   const refleksjonerTotalt = reflEnkel + reflKompleks
   return { aapne, lukkede, bekreftelser, refleksjonEnkel: reflEnkel, refleksjonKompleks: reflKompleks, refleksjonerTotalt, oppsummeringer, spørsmålTotalt }
 }
+
+// Midlertidig alias for bakoverkompatibilitet:
+export const MI_KLASSIFISERING_PROMPT_NB = MI_KLASSIFISERING_PROMPT_NB_LITE;

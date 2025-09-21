@@ -4,6 +4,37 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import './globals.css';
 import { Turn } from '../lib/types';
 
+/* ===== SCORM bridge (postMessage) – trygt å ha her i klientkomponenten ===== */
+function sendScormMessage(payload: Record<string, any>) {
+  if (typeof window !== 'undefined' && window.parent) {
+    try {
+      window.parent.postMessage({ type: 'scorm', ...payload }, '*');
+    } catch (e) {
+      // Ignorer stille dersom vi ikke er inne i SCORM-wrapper
+      console.warn('SCORM postMessage feilet (ikke kritisk):', e);
+    }
+  }
+}
+
+function sendScore(score: number) {
+  const s = Math.max(0, Math.min(100, Math.round(score)));
+  sendScormMessage({ event: 'score', score: s });
+}
+
+function sendProgress(progress: number) {
+  const p = Math.max(0, Math.min(100, Math.round(progress)));
+  sendScormMessage({ event: 'progress', progress: p });
+}
+
+function sendCompleted() {
+  sendScormMessage({ event: 'completed' });
+}
+
+function sendExit() {
+  sendScormMessage({ event: 'exit' });
+}
+
+/* ===== Hjelpere ===== */
 function makeId() {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
     try {
@@ -30,6 +61,9 @@ export default function Page() {
   const chatRef = useRef<HTMLDivElement>(null);
   const [logoOk, setLogoOk] = useState(true);
 
+  // Juster hvis du vil måle progresjon mot et annet mål
+  const TARGET_TURNS = 10;
+
   useEffect(() => {
     resetSession(false);
   }, []);
@@ -48,6 +82,9 @@ export default function Page() {
     setAnalysis(null);
     setReportHtml('');
     setShowHint(false);
+
+    // SCORM: nullstill progresjon ved ny samtale
+    sendProgress(0);
   }
 
   // Transkript til LLM (assistant=jobbsøker, user=jobbkonsulent)
@@ -72,7 +109,15 @@ export default function Page() {
       ts: Date.now(),
     };
 
-    setTurns((prev) => [...prev, me]);
+    setTurns((prev) => {
+      const next = [...prev, me];
+
+      // SCORM: oppdater progresjon ved ny tur
+      const progress = Math.min(100, Math.round((next.length / TARGET_TURNS) * 100));
+      sendProgress(progress);
+
+      return next;
+    });
     setInput('');
     setBusy(true);
 
@@ -94,7 +139,15 @@ export default function Page() {
         text: replyText,
         ts: Date.now(),
       };
-      setTurns((prev) => [...prev, reply]);
+      setTurns((prev) => {
+        const next = [...prev, reply];
+
+        // SCORM: oppdater progresjon også når jobbsøker svarer
+        const progress = Math.min(100, Math.round((next.length / TARGET_TURNS) * 100));
+        sendProgress(progress);
+
+        return next;
+      });
     } finally {
       setBusy(false);
       // scroll ned
@@ -149,13 +202,22 @@ export default function Page() {
 
       const html = await r.text();
       setReportHtml(html);
+
+      /* ===== SCORM: score + completed =====
+         Forutsetter at /api/analyze returnerer total_score (0–100) som a.total_score.
+         Justér hvis ditt felt heter noe annet. */
+      if (typeof a?.total_score === 'number') {
+        sendScore(a.total_score);
+      }
+      // Marker som fullført når rapporten er generert
+      sendCompleted();
     } catch (e: any) {
       console.error('Unexpected error:', e);
       alert(`Uventet feil: ${e?.message ?? e}`);
     } finally {
       setAnalyzing(false);
     }
-  } // ⬅️ Denne klammen manglet hos deg
+  } // ⬅️ pass på klamme
 
   function downloadHtml() {
     const blob = new Blob([reportHtml], { type: 'text/html;charset=utf-8' });
@@ -335,6 +397,11 @@ export default function Page() {
           )}
         </div>
       )}
+
+      {/* (Valgfritt) Egen avslutt-knapp som også sender exit til SCORM-wrapper */}
+      {/* <div style={{ marginTop: 16, textAlign: 'center' }}>
+        <button className="secondary" onClick={() => sendExit()}>Avslutt (SCORM)</button>
+      </div> */}
     </div>
   );
 }

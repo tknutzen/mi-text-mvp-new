@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
     const klass = etterbehandleKlassifisering(medIndex, rå)
     const tellinger = tellingerFraKlassifisering(klass)
 
-    // Bygg analysis-like for scoring
+    // counts/ratios for scoring/rapport
     const counts = {
       open_questions: tellinger.aapne,
       closed_questions: tellinger.lukkede,
@@ -142,6 +142,31 @@ export async function POST(req: NextRequest) {
       reflection_to_question: (tellinger.spørsmålTotalt ? (tellinger.refleksjonerTotalt) / tellinger.spørsmålTotalt : 0),
       complex_reflection_share: (tellinger.refleksjonerTotalt ? tellinger.refleksjonKompleks / tellinger.refleksjonerTotalt : 0)
     }
+
+    // Eksempler (til klikkbare lister i rapporten)
+    const byIndex: Record<number, string> = {}
+    for (const t of medIndex) if (t.speaker === "jobbkonsulent") byIndex[t.index] = t.text
+
+    const examples = {
+      open_questions: [] as string[],
+      closed_questions: [] as string[],
+      reflections_simple: [] as string[],
+      reflections_complex: [] as string[],
+      affirmations: [] as string[],
+      summaries: [] as string[]
+    }
+    for (const r of klass.per_turn || []) {
+      const txt = byIndex[r.index] || ""
+      if (!txt) continue
+      if (r.labels.open_question) examples.open_questions.push(txt)
+      if (r.labels.closed_question) examples.closed_questions.push(txt)
+      if (r.labels.reflection_simple) examples.reflections_simple.push(txt)
+      if (r.labels.reflection_complex) examples.reflections_complex.push(txt)
+      if (r.labels.affirmation) examples.affirmations.push(txt)
+      if (r.labels.summary) examples.summaries.push(txt)
+    }
+
+    // analysis-like for scoring
     const analysisLike = {
       counts,
       ratios,
@@ -151,11 +176,14 @@ export async function POST(req: NextRequest) {
 
     const total_score = scoreFromAnalysis(analysisLike)
 
-    // NB: legg ved diagnosefelt
+    // Svarobjekt til klient/rapport
     const resultat = {
       prompt_mode,
       prompt_sha256,
       tellinger,
+      counts,
+      ratios,
+      examples,               // ⬅️ brukes av /api/report til «Vis eksempler»
       klassifisering: klass.per_turn,
       tema: body.topic || "",
       total_score
