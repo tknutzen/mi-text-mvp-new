@@ -72,9 +72,12 @@ function hasSufficientData(analysis: AnalyzeLike) {
   return t !== undefined ? total >= 5 && t >= 5 : total >= 5
 }
 function getOrigin(req: NextRequest) {
-  const proto = req.headers.get("x-forwarded-proto") ?? "http"
-  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "localhost:3000"
-  return ${proto}://${host}
+  const proto = req.headers.get("x-forwarded-proto") ?? "http";
+  const host =
+    req.headers.get("x-forwarded-host") ??
+    req.headers.get("host") ??
+    "localhost:3000";
+  return `${proto}://${host}`;
 }
 
 /* ===================== Finn i body (robust) ===================== */
@@ -282,11 +285,22 @@ function scoreScaleHTML(score: number, bandText: string) {
     0:"Ingen OARS",20:"Lite OARS",40:"Moderat OARS",60:"God OARS",80:"Meget god OARS",100:"Fullkommen OARS"
   }
 
-  const majorTicks = majors.map(p=>
+  const majorTicks = majors
+    .map(
+      (p) => `
     <div class="tick major" style="left:${p}%;" aria-hidden="true"></div>
     <div class="tick-label" style="left:${p}%;">${esc(majorLabels[p] || String(p))}</div>
-  ).join("")
-  const minorTicks = minors.map(p=><div class="tick minor" style="left:${p}%;" aria-hidden="true"></div>).join("")
+  `
+    )
+    .join("");
+
+  const minorTicks = minors
+    .map(
+      (p) => `
+    <div class="tick minor" style="left:${p}%;" aria-hidden="true"></div>
+  `
+    )
+    .join("");
 
   return `
   <div class="scale">
@@ -321,6 +335,12 @@ function renderHTML(analysis: AnalyzeLike) {
   const exIncoming = analysis.examples || { open_questions:[], closed_questions:[], reflections_simple:[], reflections_complex:[], affirmations:[], summaries:[] }
   const turnsForView = analysis.__turns_for_view || []
   const klass = analysis.klassifisering || []
+
+  // Hjelper for "Vis eksempler"-knapp (ren streng, ikke JSX)
+  const exBtn = (targetId: string, count?: number) =>
+    count && count > 0
+      ? `<button class="linkbtn" data-target="${targetId}">Vis eksempler (${count})</button>`
+      : ""
 
   function buildAnchoredExamples(): Examples {
     if (klass?.length && turnsForView?.length) {
@@ -404,9 +424,14 @@ function renderHTML(analysis: AnalyzeLike) {
 
   // Kun tekst – ikke lenker
   const exItem = (it: any) => {
-    const txt = typeof it === "string" ? it : (typeof it?.text === "string" ? it.text : String(it ?? ""))
-    return <li>${esc(txt)}</li>
-  }
+    const txt =
+      typeof it === "string"
+        ? it
+        : typeof it?.text === "string"
+        ? it.text
+        : String(it ?? "");
+    return `<li>${esc(txt)}</li>`;
+  };
 
   return `<!doctype html>
 <html lang="no">
@@ -503,7 +528,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.open_questions)}</td>
           <td>
             Spørsmål som inviterer til utforsking.
-            ${(ex.open_questions?.length||0) ? <button class="linkbtn" data-target="ex-open">Vis eksempler (${ex.open_questions.length})</button> : ""}
+            ${exBtn("ex-open", ex.open_questions?.length)}
             <div id="ex-open" class="examples">
               <ul>${(ex.open_questions||[]).map(exItem).join("")}</ul>
             </div>
@@ -515,7 +540,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.closed_questions)}</td>
           <td>
             Ja/nei- eller korte faktaspørsmål.
-            ${(ex.closed_questions?.length||0) ? <button class="linkbtn" data-target="ex-closed">Vis eksempler (${ex.closed_questions.length})</button> : ""}
+            ${exBtn("ex-closed", ex.closed_questions?.length)}
             <div id="ex-closed" class="examples">
               <ul>${(ex.closed_questions||[]).map(exItem).join("")}</ul>
             </div>
@@ -527,7 +552,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.reflections_simple)}</td>
           <td>
             Gjenspeiler innhold i korte ordelag.
-            ${(ex.reflections_simple?.length||0) ? <button class="linkbtn" data-target="ex-rs">Vis eksempler (${ex.reflections_simple.length})</button> : ""}
+            ${exBtn("ex-rs", ex.reflections_simple?.length)}
             <div id="ex-rs" class="examples">
               <ul>${(ex.reflections_simple||[]).map(exItem).join("")}</ul>
             </div>
@@ -539,7 +564,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.reflections_complex)}</td>
           <td>
             Utvider/fortolker – går litt dypere.
-            ${(ex.reflections_complex?.length||0) ? <button class="linkbtn" data-target="ex-rc">Vis eksempler (${ex.reflections_complex.length})</button> : ""}
+            ${exBtn("ex-rc", ex.reflections_complex?.length)}
             <div id="ex-rc" class="examples">
               <ul>${(ex.reflections_complex||[]).map(exItem).join("")}</ul>
             </div>
@@ -551,7 +576,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.affirmations)}</td>
           <td>
             Styrke-/innsatsfokuserte utsagn.
-            ${(ex.affirmations?.length||0) ? <button class="linkbtn" data-target="ex-aff">Vis eksempler (${ex.affirmations.length})</button> : ""}
+            ${exBtn("ex-aff", ex.affirmations?.length)}
             <div id="ex-aff" class="examples">
               <ul>${(ex.affirmations||[]).map(exItem).join("")}</ul>
             </div>
@@ -563,7 +588,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.summaries)}</td>
           <td>
             Bør brukes ved skifte/slutt. Refleksjon helt mot slutten tolkes som oppsummering.
-            ${(ex.summaries?.length||0) ? <button class="linkbtn" data-target="ex-sum">Vis eksempler (${ex.summaries.length})</button> : ""}
+            ${exBtn("ex-sum", ex.summaries?.length)}
             <div id="ex-sum" class="examples">
               <ul>${(ex.summaries||[]).map(exItem).join("")}</ul>
             </div>
@@ -586,26 +611,26 @@ function renderHTML(analysis: AnalyzeLike) {
       <div class="section-title">Tilbakemelding</div>
       ${
         sufficient
-          ? 
+          ? `
             <div style="display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(280px,1fr));">
               <div>
                 <strong>Dette fungerte godt</strong>
                 ${
                   (useFeedback?.strengths?.length)
-                    ? <ul>${(useFeedback.strengths as string[]).map(s=><li class="good">${esc(s)}</li>).join("")}</ul>
-                    : <div class="small muted">Ingen spesifikke styrker identifisert i denne økten.</div>
+                    ? `<ul>${(useFeedback.strengths as string[]).map(s=>`<li class="good">${esc(s)}</li>`).join("")}</ul>`
+                    : `<div class="small muted">Ingen spesifikke styrker identifisert i denne økten.</div>`
                 }
               </div>
               <div>
                 <strong>Dette kan forbedres</strong>
                 ${
                   (useFeedback?.improvements?.length)
-                    ? <ul>${(useFeedback.improvements as string[]).map(s=><li class="bad">${esc(s)}</li>).join("")}</ul>
-                    : <div class="small muted">Ingen konkrete forbedringspunkter identifisert i denne økten.</div>
+                    ? `<ul>${(useFeedback.improvements as string[]).map(s=>`<li class="bad">${esc(s)}</li>`).join("")}</ul>`
+                    : `<div class="small muted">Ingen konkrete forbedringspunkter identifisert i denne økten.</div>`
                 }
               </div>
-            </div>
-          : <div class="small muted">Datagrunnlaget er for lite til å gi målrettet tilbakemelding. Gjennomfør gjerne en lengre økt eller bruk flere OARS-tilnærminger for å få mer treffsikker rapport.</div>
+            </div>`
+          : `<div class="small muted">Datagrunnlaget er for lite til å gi målrettet tilbakemelding. Gjennomfør gjerne en lengre økt eller bruk flere OARS-tilnærminger for å få mer treffsikker rapport.</div>`
       }
     </div>
 
@@ -712,7 +737,7 @@ async function ensureAnalysis(body: any, req: NextRequest): Promise<AnalyzeLike>
   if (rawTurns && rawTurns.length) {
     const origin = getOrigin(req)
     const turns = mapToAnalyzeTurns(rawTurns)
-    const res = await fetch(${origin}/api/analyze, {
+    const res = await fetch(`${origin}/api/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
@@ -720,7 +745,7 @@ async function ensureAnalysis(body: any, req: NextRequest): Promise<AnalyzeLike>
     })
     if (!res.ok) {
       const err = await res.text().catch(() => "")
-      throw new Error(Analyze-feil ${res.status}: ${err})
+      throw new Error(`Analyze-feil ${res.status}: ${err}`)
     }
     const j = await res.json()
     return {

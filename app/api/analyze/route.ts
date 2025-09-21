@@ -53,7 +53,7 @@ async function kallOpenAI(model: string, messages: any[], brukJsonModus: boolean
   const r = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: Bearer ${process.env.OPENAI_API_KEY},
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify(body)
@@ -61,7 +61,7 @@ async function kallOpenAI(model: string, messages: any[], brukJsonModus: boolean
 
   const text = await r.text()
   if (!r.ok) {
-    const err = new Error(OpenAI-feil ${r.status}: ${text})
+    const err = new Error(`OpenAI-feil ${r.status}: ${text}`)
     ;(err as any).status = r.status
     ;(err as any).raw = text
     throw err
@@ -138,8 +138,8 @@ function heuristicFeedback(counts: any, ratios: any): Feedback {
   const r = counts.reflections_simple + counts.reflections_complex
 
   if (counts.summaries > 0) strengths.push("Du oppsummerer ved skifte/slutt – det skaper struktur og felles forståelse.")
-  if (q && counts.open_questions / q >= 0.5) strengths.push(Høy andel åpne spørsmål (${Math.round((counts.open_questions/q)*100)}%) gir klienten mer plass.)
-  if (q && r) strengths.push(Du bruker refleksjoner jevnt (R/Q=${(r/q).toFixed(2)}).)
+  if (q && counts.open_questions / q >= 0.5) strengths.push(`Høy andel åpne spørsmål (${Math.round((counts.open_questions/q)*100)}%) gir klienten mer plass.`)
+  if (q && r) strengths.push(`Du bruker refleksjoner jevnt (R/Q=${(r/q).toFixed(2)}).`)
   if (counts.reflections_complex > 0) strengths.push("Du har med komplekse refleksjoner som løfter mening/følelse.")
   if (!strengths.length) strengths.push("God grunnbruk av OARS – bra start.")
 
@@ -164,8 +164,8 @@ function parseJsonLoose(s: string): any | null {
   if (!s) return null
   let txt = s.trim()
 
-  // Fjern kodegjerder ...
-  const fence = txt.match(/(json)?([\s\S]*?)/i)
+  // Fjern kodegjerder ```...```
+  const fence = txt.match(/```(json)?([\s\S]*?)```/i)
   if (fence && fence[2]) txt = fence[2].trim()
 
   // Finn første balancerte {...}
