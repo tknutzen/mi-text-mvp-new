@@ -182,7 +182,7 @@ export default function Page() {
       const a = await resp.json();
       setAnalysis(a);
 
-      // 2) Rapport – send samme topic-felt
+      // 2) Rapport – send samme topic-felt + turns (for ekte eksempler)
       const r = await fetch('/api/report', {
         method: 'POST',
         headers: {
@@ -190,26 +190,21 @@ export default function Page() {
           Accept: 'text/html',
         },
         cache: 'no-store',
-        body: JSON.stringify({ analysis: a, topic }),
+        body: JSON.stringify({ analysis: a, topic, turns }),
       });
 
       if (!r.ok) {
         const msg = await r.text().catch(() => 'Ukjent feil');
-        console.error('Report error:', msg);
-        alert(`Feil i rapport-endepunktet (/api/report): ${msg}`);
-        return;
+        throw new Error(`Feil i rapport-endepunktet (/api/report): ${msg}`);
       }
 
       const html = await r.text();
       setReportHtml(html);
 
-      /* ===== SCORM: score + completed =====
-         Forutsetter at /api/analyze returnerer total_score (0–100) som a.total_score.
-         Justér hvis ditt felt heter noe annet. */
+      // SCORM: score + completed
       if (typeof a?.total_score === 'number') {
         sendScore(a.total_score);
       }
-      // Marker som fullført når rapporten er generert
       sendCompleted();
     } catch (e: any) {
       console.error('Unexpected error:', e);
@@ -375,13 +370,9 @@ export default function Page() {
         </div>
       </div>
 
-      {/* KORT 3: Full rapport */}
+      {/* KORT 3: Rapport (uten “Rapport”-tittel og “Totalscore: …”-badge) */}
       {analysis && (
         <div className="card" style={{ marginTop: 12 }}>
-          <h2>Rapport</h2>
-          <p>
-            <span className="badge">Totalscore: {analysis.total_score}/100</span>
-          </p>
           {reportHtml && (
             <>
               <iframe
@@ -390,8 +381,11 @@ export default function Page() {
                 srcDoc={reportHtml}
               />
               <div className="download">
-                <button onClick={downloadHtml}>Last ned HTML-rapport</button>
-                <p className="small">Tips: Åpne HTML-filen og skriv ut som PDF.</p>
+                <button onClick={downloadHtml}>Last ned rapport</button>
+                <p className="small">
+                  Data slettes umiddelbart. Dersom du ønsker å ta vare på resultatet av samtalen,
+                  må du lagre rapporten før du går ut av denne aktiviteten.
+                </p>
               </div>
             </>
           )}

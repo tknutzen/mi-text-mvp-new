@@ -1,4 +1,3 @@
-// app/api/report/route.ts
 import { NextRequest } from "next/server"
 
 export const runtime = "nodejs"
@@ -75,7 +74,7 @@ function hasSufficientData(analysis: AnalyzeLike) {
 function getOrigin(req: NextRequest) {
   const proto = req.headers.get("x-forwarded-proto") ?? "http"
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "localhost:3000"
-  return `${proto}://${host}`
+  return ${proto}://${host}
 }
 
 /* ===================== Finn i body (robust) ===================== */
@@ -166,66 +165,62 @@ function countsFromKlassifisering(klass: any[]): Counts {
   return c
 }
 
-/* Eksempler som ankere til transkriptet (robust: bruker global index når mulig) */
+/* Eksempler (tekst, ikke-klikkbare) fra klassifisering + turns */
 function examplesFromKlassAndTurns(
   klass: any[],
   turns: { index?: number; speaker: "jobbkonsulent" | "jobbsøker"; text: string }[]
 ): Examples {
-  // 1) Oppslag fra GLOBAL turn-index -> tekst (kun for jobbkonsulent)
-  const byIndex: Record<number, string> = {};
-  const consultantSeqTexts: string[] = [];
+  const byIndex: Record<number, string> = {}
+  const consultantSeqTexts: string[] = []
 
   turns.forEach((t, i) => {
-    if (t.speaker !== "jobbkonsulent") return;
-    const key = typeof t.index === "number" ? t.index : i; // bruk global index hvis den finnes
-    const txt = t.text || "";
-    byIndex[key] = txt;
-    consultantSeqTexts.push(txt); // fallback-sekvens
-  });
+    if (t.speaker !== "jobbkonsulent") return
+    const key = typeof t.index === "number" ? t.index : i
+    const txt = t.text || ""
+    byIndex[key] = txt
+    consultantSeqTexts.push(txt)
+  })
 
-  // 2) Map: global index -> sekvensposisjon i klassifiseringsrekkefølge
-  const seqByIndex: Record<number, number> = {};
-  let seq = 0;
+  const seqByIndex: Record<number, number> = {}
+  let seq = 0
   for (const r of klass || []) {
-    const idx = r?.index;
+    const idx = r?.index
     if (typeof idx === "number" && seqByIndex[idx] === undefined) {
-      seqByIndex[idx] = seq++;
+      seqByIndex[idx] = seq++
     }
   }
 
-  // 3) Hent tekst for gitt global index, med fallback til sekvens
   function textFor(idx: number): string {
-    const direct = byIndex[idx];
-    if (direct) return direct;
-    const s = seqByIndex[idx];
-    if (typeof s === "number" && consultantSeqTexts[s]) return consultantSeqTexts[s];
-    return "";
+    const direct = byIndex[idx]
+    if (direct) return direct
+    const s = seqByIndex[idx]
+    if (typeof s === "number" && consultantSeqTexts[s]) return consultantSeqTexts[s]
+    return ""
   }
 
-  // 4) Bygg eksempellister (kun når vi faktisk har tekst)
   const ex: Examples = {
     open_questions: [], closed_questions: [],
     reflections_simple: [], reflections_complex: [],
     affirmations: [], summaries: []
-  };
-
-  for (const r of klass || []) {
-    const idx = r?.index;
-    if (typeof idx !== "number") continue;
-    const L = r?.labels || {};
-    const txt = textFor(idx);
-    if (!txt) continue;
-
-    const item = { index: idx, text: txt };
-    if (L.open_question) ex.open_questions.push(item);
-    if (L.closed_question) ex.closed_questions.push(item);
-    if (L.reflection_simple && !L.summary) ex.reflections_simple.push(item);
-    if (L.reflection_complex && !L.summary) ex.reflections_complex.push(item);
-    if (L.affirmation) ex.affirmations.push(item);
-    if (L.summary) ex.summaries.push(item);
   }
 
-  return ex;
+  for (const r of klass || []) {
+    const idx = r?.index
+    if (typeof idx !== "number") continue
+    const L = r?.labels || {}
+    const txt = textFor(idx)
+    if (!txt) continue
+
+    const item = { index: idx, text: txt }
+    if (L.open_question) ex.open_questions.push(item)
+    if (L.closed_question) ex.closed_questions.push(item)
+    if (L.reflection_simple && !L.summary) ex.reflections_simple.push(item)
+    if (L.reflection_complex && !L.summary) ex.reflections_complex.push(item)
+    if (L.affirmation) ex.affirmations.push(item)
+    if (L.summary) ex.summaries.push(item)
+  }
+
+  return ex
 }
 
 /* ===================== Tema-gruppering ===================== */
@@ -278,35 +273,44 @@ function scoreBandText(score: number) {
 
 /* ===================== Skala/visual ===================== */
 function scoreScaleHTML(score: number, bandText: string) {
-  const s = clamp(Math.round(score))
+  const sDisplay = clamp(Math.round(score))
+  const pos = Math.round(score)
+
   const majors = [0, 20, 40, 60, 80, 100]
   const minors = [10, 30, 50, 70, 90]
   const majorLabels: Record<number, string> = {
     0:"Ingen OARS",20:"Lite OARS",40:"Moderat OARS",60:"God OARS",80:"Meget god OARS",100:"Fullkommen OARS"
   }
 
-  const majorTicks = majors.map(p=>`
+  const majorTicks = majors.map(p=>
     <div class="tick major" style="left:${p}%;" aria-hidden="true"></div>
     <div class="tick-label" style="left:${p}%;">${esc(majorLabels[p] || String(p))}</div>
-  `).join("")
-  const minorTicks = minors.map(p=>`<div class="tick minor" style="left:${p}%;" aria-hidden="true"></div>`).join("")
+  ).join("")
+  const minorTicks = minors.map(p=><div class="tick minor" style="left:${p}%;" aria-hidden="true"></div>).join("")
+
   return `
   <div class="scale">
-    <div class="bar">
-      <div class="seg red"></div>
-      <div class="seg yellow"></div>
-      <div class="seg green"></div>
-      ${minorTicks}
-      ${majorTicks}
-      <div class="score-marker" style="left:${s}%;" aria-label="Score ${s}/100">
-        <div class="score-chip">
-          <div class="score-chip-text">${s}/100</div>
-          <div class="score-chip-arrow"></div>
+    <div class="scale-inner">
+      <div class="bar-wrap">
+        <div class="bar">
+          <div class="seg red"></div>
+          <div class="seg yellow"></div>
+          <div class="seg green"></div>
+          ${minorTicks}
+          ${majorTicks}
         </div>
-        <div class="score-pin"></div>
+
+        <div class="score-marker" style="left:${pos}%;" aria-label="Score ${sDisplay}/100">
+          <div class="score-tris">
+            <span class="tri tri-up"></span>
+            <div class="score-chip"><div class="score-chip-text">${sDisplay}/100</div></div>
+            <span class="tri tri-down"></span>
+          </div>
+        </div>
       </div>
+
+      <div class="bandtext">${esc(bandText)}</div>
     </div>
-    <div class="bandtext">${esc(bandText)}</div>
   </div>`
 }
 
@@ -318,13 +322,12 @@ function renderHTML(analysis: AnalyzeLike) {
   const turnsForView = analysis.__turns_for_view || []
   const klass = analysis.klassifisering || []
 
-  // Bygg lenkbare eksempellister
   function buildAnchoredExamples(): Examples {
     if (klass?.length && turnsForView?.length) {
       return examplesFromKlassAndTurns(
         klass as any[],
         turnsForView.map(t => ({ index: t.index, speaker: t.speaker as any, text: t.text }))
-      );
+      )
     }
     if (klass?.length) {
       const pick = (flag: (L:any)=>boolean, incoming: ExampleItem[]) => {
@@ -353,7 +356,6 @@ function renderHTML(analysis: AnalyzeLike) {
   }
   const ex = buildAnchoredExamples()
 
-  // Fallback-tilbakemelding
   const sufficient = hasSufficientData(analysis)
   const totalEvents = totalOARSEvents(counts)
   function makeFeedback() {
@@ -400,14 +402,10 @@ function renderHTML(analysis: AnalyzeLike) {
   const total_score = clamp(Math.round(analysis.total_score ?? 0))
   const bandText = scoreBandText(total_score)
 
-  // Gjør hvert eksempel til en KLAR lenke + data-goto fallback
+  // Kun tekst – ikke lenker
   const exItem = (it: any) => {
-    if (typeof it === "string") return `<li>${esc(it)}</li>`
-    const idx = typeof it?.index === "number" ? it.index : null
-    const txt = typeof it?.text === "string" ? it.text : String(it ?? "")
-    return idx !== null
-      ? `<li><a class="goto" data-goto="turn-${idx}" href="#turn-${idx}">${esc(txt)}</a></li>`
-      : `<li>${esc(txt)}</li>`
+    const txt = typeof it === "string" ? it : (typeof it?.text === "string" ? it.text : String(it ?? ""))
+    return <li>${esc(txt)}</li>
   }
 
   return `<!doctype html>
@@ -421,7 +419,7 @@ function renderHTML(analysis: AnalyzeLike) {
       --text:#111827; --muted:#6b7280; --line:#e5e7eb; --brand:#1f2937; --bg:#ffffff;
       --good:#065f46; --bad:#7f1d1d;
       --red:#ef4444; --yellow:#f59e0b; --green:#10b981;
-      --buttonH: 40px;
+      --buttonH: 44px;
     }
     body{ margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); }
     .wrap{ max-width:900px; margin:32px auto; padding:0 16px; }
@@ -438,8 +436,14 @@ function renderHTML(analysis: AnalyzeLike) {
     .threecol th:nth-child(3), .threecol td:nth-child(3){ width: 40%; color: var(--muted); }
 
     .scale { margin-top: 25px; }
-    .bar{ position: relative; height: var(--buttonH); border-radius: 12px; overflow: hidden; background: transparent; box-shadow: inset 0 0 0 1px #11182712; }
-    .seg{ position:absolute; top:0; height:100%; border-radius: 0; }
+    .scale-inner{ max-width: 860px; margin: 0 auto; padding: 0 6px; }
+    .bar-wrap{ position: relative; margin: 0 auto; }
+    .bar{
+      position: relative; height: var(--buttonH);
+      border-radius: 12px; overflow: hidden;
+      background: transparent; box-shadow: inset 0 0 0 1px #11182712;
+    }
+    .seg{ position:absolute; top:0; height:100%; }
     .seg.red{ left:0; width:50%; background: var(--red); }
     .seg.yellow{ left:50%; width:30%; background: var(--yellow); }
     .seg.green{ left:80%; width:20%; background: var(--green); }
@@ -449,58 +453,35 @@ function renderHTML(analysis: AnalyzeLike) {
     .tick.major { opacity: 0.8; }
     .tick-label{ position:absolute; top: calc(100% + 6px); transform: translateX(-50%); font-size: 11px; font-weight: 700; color: #111827; white-space: nowrap; pointer-events: none; }
 
-.score-marker{
-  position:absolute;
-  top:0; bottom:0;                 /* fyll hele høyden */
-  height:100%;
-  transform: translateX(-50%);
-  display:flex;                    /* gjør det lett å sentrere chippen */
-  align-items:center;              /* vertikalt midt i linja */
-  justify-content:center;
-  pointer-events:none;
-}
+    .score-marker{
+      position:absolute; top:0; bottom:0;
+      transform: translateX(-50%);
+      display:flex; align-items:center; justify-content:center;
+      pointer-events:none;
+    }
 
-.score-pin{
-  position:absolute;
-  top:0; bottom:0; left:50%;
-  width:2px;
-  background:#111827;
-  opacity:.6;
-  transform: translateX(-1px);
-}
+    .score-chip{
+      background:#111827; color:#fff;
+      border-radius:10px;
+      padding:6px 10px;
+      font-weight:800; font-size:13px; line-height:1.2;
+      white-space:nowrap;
+      box-shadow: 0 2px 6px rgba(17,24,39,.15);
+    }
+    .score-chip-text{ position:relative; z-index:2; }
 
-/* Chippen ligger nå INNI linja (ingen absolutt posisjon nødvendig) */
-.score-chip{
-  position:static;                 /* viktig: ikke absolute */
-  background:#111827; color:#fff;
-  border-radius:8px;
-  padding:4px 8px;                /* litt mindre padding inni linja */
-  margin-top:2px;                 /* luft mot topp */
-  margin-bottom:2px;              /* luft mot bunn */
-  font-weight:800; font-size:12px;
-  white-space:nowrap;
-  box-shadow: 0 2px 6px rgba(17,24,39,.15);
-}
+    .score-tris{ display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; }
+    .tri{ width:0; height:0; border-left:8px solid transparent; border-right:8px solid transparent; }
+    .tri-up{   border-bottom:10px solid #111827; }
+    .tri-down{ border-top:10px solid #111827; }
 
-.score-chip-text{ position:relative; z-index:2; }
-
-/* Pilen trengs ikke når chippen er inni linja */
-.score-chip-arrow{ display:none; }
-
-.bandtext{ margin-top: 25px; font-size: 14px; color: var(--muted); }
+    .bandtext{ margin-top: 14px; font-size: 14px; color: var(--muted); }
 
     .linkbtn{ background:none; border:none; color:#2563eb; cursor:pointer; padding:0; font-size:14px; text-decoration:underline; }
     .examples{ display:none; margin-top:8px; }
     .examples ul{ margin:6px 0 0 18px; padding:0; }
     .examples li{ margin-bottom:4px; }
-    .examples a{ color:#2563eb; text-decoration:underline; cursor:pointer; }
     ul{ margin:8px 0 0 18px; padding:0; }
-
-    .transcript table{ width:100%; border-collapse:collapse; }
-    .transcript th, .transcript td{ padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
-    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size:12px; color:var(--muted); }
-    .flash{ animation: flash 2s ease-out 1; }
-    @keyframes flash { 0%{ background:#fff3cd;} 100%{ background:transparent; } }
   </style>
 </head>
 <body>
@@ -522,7 +503,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.open_questions)}</td>
           <td>
             Spørsmål som inviterer til utforsking.
-            ${(ex.open_questions?.length||0) ? `<button class="linkbtn" data-target="ex-open">Vis eksempler (${ex.open_questions.length})</button>` : ""}
+            ${(ex.open_questions?.length||0) ? <button class="linkbtn" data-target="ex-open">Vis eksempler (${ex.open_questions.length})</button> : ""}
             <div id="ex-open" class="examples">
               <ul>${(ex.open_questions||[]).map(exItem).join("")}</ul>
             </div>
@@ -534,7 +515,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.closed_questions)}</td>
           <td>
             Ja/nei- eller korte faktaspørsmål.
-            ${(ex.closed_questions?.length||0) ? `<button class="linkbtn" data-target="ex-closed">Vis eksempler (${ex.closed_questions.length})</button>` : ""}
+            ${(ex.closed_questions?.length||0) ? <button class="linkbtn" data-target="ex-closed">Vis eksempler (${ex.closed_questions.length})</button> : ""}
             <div id="ex-closed" class="examples">
               <ul>${(ex.closed_questions||[]).map(exItem).join("")}</ul>
             </div>
@@ -546,7 +527,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.reflections_simple)}</td>
           <td>
             Gjenspeiler innhold i korte ordelag.
-            ${(ex.reflections_simple?.length||0) ? `<button class="linkbtn" data-target="ex-rs">Vis eksempler (${ex.reflections_simple.length})</button>` : ""}
+            ${(ex.reflections_simple?.length||0) ? <button class="linkbtn" data-target="ex-rs">Vis eksempler (${ex.reflections_simple.length})</button> : ""}
             <div id="ex-rs" class="examples">
               <ul>${(ex.reflections_simple||[]).map(exItem).join("")}</ul>
             </div>
@@ -558,7 +539,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.reflections_complex)}</td>
           <td>
             Utvider/fortolker – går litt dypere.
-            ${(ex.reflections_complex?.length||0) ? `<button class="linkbtn" data-target="ex-rc">Vis eksempler (${ex.reflections_complex.length})</button>` : ""}
+            ${(ex.reflections_complex?.length||0) ? <button class="linkbtn" data-target="ex-rc">Vis eksempler (${ex.reflections_complex.length})</button> : ""}
             <div id="ex-rc" class="examples">
               <ul>${(ex.reflections_complex||[]).map(exItem).join("")}</ul>
             </div>
@@ -570,7 +551,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.affirmations)}</td>
           <td>
             Styrke-/innsatsfokuserte utsagn.
-            ${(ex.affirmations?.length||0) ? `<button class="linkbtn" data-target="ex-aff">Vis eksempler (${ex.affirmations.length})</button>` : ""}
+            ${(ex.affirmations?.length||0) ? <button class="linkbtn" data-target="ex-aff">Vis eksempler (${ex.affirmations.length})</button> : ""}
             <div id="ex-aff" class="examples">
               <ul>${(ex.affirmations||[]).map(exItem).join("")}</ul>
             </div>
@@ -582,7 +563,7 @@ function renderHTML(analysis: AnalyzeLike) {
           <td>${esc(counts.summaries)}</td>
           <td>
             Bør brukes ved skifte/slutt. Refleksjon helt mot slutten tolkes som oppsummering.
-            ${(ex.summaries?.length||0) ? `<button class="linkbtn" data-target="ex-sum">Vis eksempler (${ex.summaries.length})</button>` : ""}
+            ${(ex.summaries?.length||0) ? <button class="linkbtn" data-target="ex-sum">Vis eksempler (${ex.summaries.length})</button> : ""}
             <div id="ex-sum" class="examples">
               <ul>${(ex.summaries||[]).map(exItem).join("")}</ul>
             </div>
@@ -601,46 +582,30 @@ function renderHTML(analysis: AnalyzeLike) {
       </table>
     </div>
 
-    ${turnsForView.length ? `
-    <div class="card transcript">
-      <div class="section-title">Samtaleloggen</div>
-      <table>
-        <tr><th>#</th><th>Rolle</th><th>Tekst</th></tr>
-        ${turnsForView.map(t => `
-          <tr id="turn-${t.index}">
-            <td class="mono">${t.index}</td>
-            <td>${esc(t.speaker)}</td>
-            <td>${esc(t.text)}</td>
-          </tr>
-        `).join("")}
-      </table>
-      <div class="small muted">Klikk i «Vis eksempler»-listene for å hoppe til riktig tur.</div>
-    </div>` : ``}
-
     <div class="card">
       <div class="section-title">Tilbakemelding</div>
       ${
         sufficient
-          ? `
+          ? 
             <div style="display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(280px,1fr));">
               <div>
                 <strong>Dette fungerte godt</strong>
                 ${
                   (useFeedback?.strengths?.length)
-                    ? `<ul>${(useFeedback.strengths as string[]).map(s=>`<li class="good">${esc(s)}</li>`).join("")}</ul>`
-                    : `<div class="small muted">Ingen spesifikke styrker identifisert i denne økten.</div>`
+                    ? <ul>${(useFeedback.strengths as string[]).map(s=><li class="good">${esc(s)}</li>).join("")}</ul>
+                    : <div class="small muted">Ingen spesifikke styrker identifisert i denne økten.</div>
                 }
               </div>
               <div>
                 <strong>Dette kan forbedres</strong>
                 ${
                   (useFeedback?.improvements?.length)
-                    ? `<ul>${(useFeedback.improvements as string[]).map(s=>`<li class="bad">${esc(s)}</li>`).join("")}</ul>`
-                    : `<div class="small muted">Ingen konkrete forbedringspunkter identifisert i denne økten.</div>`
+                    ? <ul>${(useFeedback.improvements as string[]).map(s=><li class="bad">${esc(s)}</li>).join("")}</ul>
+                    : <div class="small muted">Ingen konkrete forbedringspunkter identifisert i denne økten.</div>
                 }
               </div>
-            </div>`
-          : `<div class="small muted">Datagrunnlaget er for lite til å gi målrettet tilbakemelding. Gjennomfør gjerne en lengre økt eller bruk flere OARS-tilnærminger for å få mer treffsikker rapport.</div>`
+            </div>
+          : <div class="small muted">Datagrunnlaget er for lite til å gi målrettet tilbakemelding. Gjennomfør gjerne en lengre økt eller bruk flere OARS-tilnærminger for å få mer treffsikker rapport.</div>
       }
     </div>
 
@@ -666,26 +631,6 @@ function renderHTML(analysis: AnalyzeLike) {
         }
       });
     });
-
-    // Klikk på eksempel-lenke -> scroll & highlight riktig rad (robust, fungerer også uten hash)
-    document.addEventListener('click', function (e) {
-      var a = e.target && e.target.closest ? e.target.closest('a.goto') : null;
-      if (!a) return;
-
-      var goto = a.getAttribute('data-goto') || '';
-      if (!goto) return;
-
-      e.preventDefault(); // hindrer at hash-navigasjon "spises" av container/iframe
-      var row = document.getElementById(goto);
-      if (!row) return;
-
-      // scroll og flash-highlight
-      if (row.scrollIntoView) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      row.classList.remove('flash'); void row.offsetWidth; row.classList.add('flash');
-
-      // oppdater hash (valgfritt)
-      try { history.replaceState(null, '', '#'+goto); } catch (_) {}
-    }, true);
   </script>
 </body>
 </html>`
@@ -767,7 +712,7 @@ async function ensureAnalysis(body: any, req: NextRequest): Promise<AnalyzeLike>
   if (rawTurns && rawTurns.length) {
     const origin = getOrigin(req)
     const turns = mapToAnalyzeTurns(rawTurns)
-    const res = await fetch(`${origin}/api/analyze`, {
+    const res = await fetch(${origin}/api/analyze, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
@@ -775,7 +720,7 @@ async function ensureAnalysis(body: any, req: NextRequest): Promise<AnalyzeLike>
     })
     if (!res.ok) {
       const err = await res.text().catch(() => "")
-      throw new Error(`Analyze-feil ${res.status}: ${err}`)
+      throw new Error(Analyze-feil ${res.status}: ${err})
     }
     const j = await res.json()
     return {

@@ -1,4 +1,3 @@
-// lib/oars.ts
 import { Turn } from './types';
 
 /** ---------- Hjelpere ---------- */
@@ -47,20 +46,21 @@ const REFLEX_COMPLEX_PATTERNS: RegExp[] = [
   /både .* og .*/,
   /men samtidig/,
   /samtidig som/,
-  /det (virker|høres) som (om|at)/,
+  /(det (virker|høres)\s+(ut\s+som|som|at)\s+)/,
   /jeg får inntrykk av at/,
   /selv om .* (så|,)/,
-  /du prøver .* samtidig/
+  /du prøver .* samtidig/,
+  /(du virker|du fremstår|du ser ut til å) .* (torn|ambivalent|delt)/,
 ];
 
 const REFLEX_SIMPLE_PATTERNS: RegExp[] = [
   /^så du\b/,
   /^du (sier|nevner|tenker|føler|mener|opplever|ønsker|vil|prøver å|virker|kjenner)\b/,
-  /^det du sier (er|virker)\b/,
+  /^(det du sier|det høres ut som|det virker som)\b/,
   /^jeg hører\b/,
   /^jeg forstår at\b/,
   /^høres ut som\b/,
-  /^hvis jeg forstår (deg )?rett\b/
+  /^hvis jeg forstår (deg )?rett\b/,
 ];
 
 const AFFIRMATIONS_PATTERNS: RegExp[] = [
@@ -68,7 +68,8 @@ const AFFIRMATIONS_PATTERNS: RegExp[] = [
 ];
 
 const SUMMARY_LINGUISTIC: RegExp[] = [
-  /(oppsummering:|for å oppsummere|la meg oppsummere|hvis jeg skal oppsummere|kort oppsummert|hovedpunktene er|så langt jeg forstår|om jeg oppsummerer)/
+  /(oppsummering:|for å oppsummere|la meg oppsummere|hvis jeg skal oppsummere|kort oppsummert|hovedpunktene er|så langt jeg forstår|om jeg oppsummerer)/,
+  /(så det jeg hører (deg )?si er)/,
 ];
 
 const SUMMARY_TRANSITION: RegExp[] = [
@@ -86,14 +87,14 @@ function isSummarySentence(
 ): boolean {
   const hasLinguistic = SUMMARY_LINGUISTIC.some(re => re.test(sentenceNorm));
   if (hasLinguistic) return true;
-  // Viktig spesialregel: En god refleksjon helt mot slutt/overgang → regnes som oppsummering
+  // Spesialregel: God refleksjon helt mot slutt/overgang → oppsummering
   if (isNearEnd && (hasTransitionMarkerInSentence || /^du\b|^det du sier\b|^hvis jeg forstår/.test(sentenceNorm))) {
     return true;
   }
   return false;
 }
 
-/** ---------- Eksporterte typer (counts) ---------- */
+/** ---------- Eksporterte typer (counts/labels) ---------- */
 export type OarsCounts = {
   open_questions: number;
   closed_questions: number;
@@ -101,6 +102,15 @@ export type OarsCounts = {
   reflections_complex: number;
   affirmations: number;
   summaries: number;
+};
+
+export type OarsLabelSet = {
+  open_question?: boolean;
+  closed_question?: boolean;
+  reflection_simple?: boolean;
+  reflection_complex?: boolean;
+  affirmation?: boolean;
+  summary?: boolean;
 };
 
 /** ---------- Hovedteller ---------- */
@@ -163,7 +173,68 @@ export function tallyOARS(turns: Turn[]): OarsCounts {
   return counts;
 }
 
-/** ---------- Eksempler pr. kategori (for rapporten) ---------- */
+/** ---------- Detaljklassifisering med global index (for rapport-ankre) ---------- */
+export function classifyTurnsDetailed(turns: Turn[]) {
+  const out: { index: number; labels: OarsLabelSet }[] = [];
+
+  const counselorIndexes: number[] = [];
+  turns.forEach((t, i) => { if (isCounselor(t)) counselorIndexes.push(i); });
+  const lastCounselorIdx = counselorIndexes.length ? counselorIndexes[counselorIndexes.length - 1] : -1;
+  const secondLastCounselorIdx = counselorIndexes.length > 1 ? counselorIndexes[counselorIndexes.length - 2] : -1;
+
+  for (let idx = 0; idx < turns.length; idx++) {
+    const t = turns[idx];
+    if (!isCounselor(t)) continue;
+
+    const sentences = splitSentences(t.text || '');
+    const isFinal = idx === lastCounselorIdx;
+    const isNearEnd = isFinal || idx === secondLastCounselorIdx;
+
+    let labels: OarsLabelSet = {};
+
+    for (const sRaw of sentences) {
+      const s = sRaw.trim();
+      if (!s) continue;
+
+      if (isSentenceQuestion(s)) {
+        const kind = classifyQuestionSentence(s);
+        if (kind === 'open') labels.open_question = true;
+        else labels.closed_question = true;
+        continue;
+      }
+
+      const sNorm = norm(s);
+      const hasTransition = SUMMARY_TRANSITION.some(re => re.test(sNorm)) || ENDING_MARKERS.test(sNorm);
+      const asSummary = isSummarySentence(sNorm, isNearEnd, hasTransition);
+      if (asSummary) {
+        labels.summary = true;
+      } else {
+        if (REFLEX_COMPLEX_PATTERNS.some(re => re.test(sNorm))) {
+          labels.reflection_complex = true;
+        } else if (REFLEX_SIMPLE_PATTERNS.some(re => re.test(sNorm)) || (/^du\s+\S+/.test(sNorm) && !/^(prøv|prøve|burde|må|skal|kan du)\b/.test(sNorm))) {
+          labels.reflection_simple = true;
+        }
+      }
+
+      if (AFFIRMATIONS_PATTERNS.some(re => re.test(sNorm))) {
+        labels.affirmation = true;
+      }
+    }
+
+    if (Object.values(labels).some(Boolean)) {
+      // Oppsummering vinner over refleksjon for å unngå dobbelttelling
+      if (labels.summary) {
+        labels.reflection_simple = false;
+        labels.reflection_complex = false;
+      }
+      out.push({ index: idx, labels });
+    }
+  }
+
+  return out;
+}
+
+/** ---------- Eksempler pr. kategori (strenger – brukes kun hvis du ikke har klassifisering) ---------- */
 export function collectOARSExamples(turns: Turn[]) {
   const examples = {
     open_questions: [] as string[],
@@ -206,9 +277,7 @@ export function collectOARSExamples(turns: Turn[]) {
       } else {
         if (REFLEX_COMPLEX_PATTERNS.some(re => re.test(sNorm))) {
           examples.reflections_complex.push(s);
-        } else if (REFLEX_SIMPLE_PATTERNS.some(re => re.test(sNorm))) {
-          examples.reflections_simple.push(s);
-        } else if (/^du\s+\S+/.test(sNorm) && !/^(prøv|prøve|burde|må|skal|kan du)\b/.test(sNorm)) {
+        } else if (REFLEX_SIMPLE_PATTERNS.some(re => re.test(sNorm)) || (/^du\s+\S+/.test(sNorm) && !/^(prøv|prøve|burde|må|skal|kan du)\b/.test(sNorm))) {
           examples.reflections_simple.push(s);
         }
       }

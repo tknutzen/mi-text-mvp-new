@@ -36,7 +36,11 @@ function normTopic(t?: string): { id: TopicId; label: string } {
 function classifyQ(text: string): 'open' | 'closed' | 'statement' {
   const t = (text || '').trim().toLowerCase();
   if (!t) return 'statement';
-  const isQ = t.endsWith('?') || /^(hva|hvordan|hvilke|hvilken|hvem|hvorfor|når|kan|vil|skal|er|har|tror|tenker|synes|fortell|beskriv|utdyp)/.test(t);
+  const isQ =
+    t.endsWith('?') ||
+    /^(hva|hvordan|hvilke|hvilken|hvem|hvorfor|når|kan|vil|skal|er|har|tror|tenker|synes|fortell|beskriv|utdyp)/.test(
+      t
+    );
   if (!isQ) return 'statement';
   if (/^(hva|hvordan|hvilke|hvilken|hvem|hvorfor|fortell|beskriv|utdyp|si mer)/.test(t)) return 'open';
   return 'closed';
@@ -146,10 +150,10 @@ function extractResponsesText(resp: any): string {
       if (Array.isArray(content)) {
         for (const c of content) {
           const val =
-            c?.text?.value ??
-            c?.text ??
-            c?.content ??
-            (typeof c?.string === 'string' ? c.string : '');
+            (c as any)?.text?.value ??
+            (c as any)?.text ??
+            (c as any)?.content ??
+            (typeof (c as any)?.string === 'string' ? (c as any).string : '');
           if (typeof val === 'string' && val.trim()) parts.push(val);
         }
       }
@@ -210,7 +214,7 @@ export async function POST(req: NextRequest) {
     let raw = '';
 
     if (isGpt5(model) && (client as any).responses?.create) {
-      const response = await client.responses.create({
+      const response = await (client as any).responses.create({
         model,
         input: messages,
         reasoning: { effort: 'low' },
@@ -224,7 +228,7 @@ export async function POST(req: NextRequest) {
       raw = extractResponsesText(response);
 
       if ((!raw || !raw.trim()) && (response as any)?.status === 'incomplete') {
-        const response2 = await client.responses.create({
+        const response2 = await (client as any).responses.create({
           model,
           input: messages,
           reasoning: { effort: 'low' },
@@ -239,7 +243,8 @@ export async function POST(req: NextRequest) {
       const resp = await client.chat.completions.create({
         model,
         messages: messages as any,
-        max_completion_tokens: 220
+        // bruke standard feltet for denne endepunkt-typen
+        max_tokens: 220
       });
       if (process.env.NODE_ENV !== 'production') {
         console.log('CHAT COMPLETIONS RAW OBJECT >>>', JSON.stringify(resp, null, 2));
@@ -253,7 +258,7 @@ export async function POST(req: NextRequest) {
         const resp2 = await client.chat.completions.create({
           model: fallbackModel,
           messages: messages as any,
-          max_completion_tokens: 220
+          max_tokens: 220
         });
         raw = resp2.choices?.[0]?.message?.content ?? '';
         if (process.env.NODE_ENV !== 'production') {
